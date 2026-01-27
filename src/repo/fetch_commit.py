@@ -52,4 +52,33 @@ def extract_repo_from_any_url(url):
         return match.group(1) if match else None
 
 # bruke pydriller -> til å klone repo, hente commit metadata og diff/patch data (dette er fra URL)
+
+def fetch_commit_data(repo_url, commit_hash):
+    """Bruker pydriller til å klone repo og hente commit metadata +
+      diff/patcher."""
+        try:
+            for commit in Repository(repo_url,
+                                     single=commit_hash).traverse_commits():
+                    modified_files = []
+                    for mod in commit.modified_files:
+                        modified_files.append({
+                            'path' : mod.new_path or mod.old_path,
+                            'change_type': mod.change_type.name,
+                            'added_lines': mod.added_lines,
+                            'deleted_lines': mod.deleted_lines,
+                            'patch': mod.diff # Full diff/patch data
+                        })
+
+                    return {
+                        'repo_url': repo_url,
+                        'commit_hash': commit.hash,
+                        'commit_message': commit.msg,
+                        'commit_date': commit.committer_date.isoformat(),
+                        'author': commit.author.name,
+                        'modified_files': modified_files
+                    }
+        except Exception as e:
+            return {'error': str(e), 'repo_url': repo_url, 'commit_hash':
+            commit_hash}
+
 # output: repo_url, commit_hash, commit_message, commit_date, modified_files, path, patch
