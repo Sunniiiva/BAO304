@@ -12,7 +12,7 @@ os.makedirs(output_dir, exist_ok=True)
 def classify_references(references):
     """Sorterer referanser etter type: commit, pull, issue, security
     advisory."""
-        classified = {
+    classified = {
             'commits': [],
             'pulls': [],
             'issues': [],
@@ -39,24 +39,24 @@ def classify_references(references):
 def extraxt_repo_and_hash(commit_url):
     """Ekstraherer repo URL og commit hash fra Github commit URL."""
     match = re.match(r'(https://github\.com/[^/]+/[^/]+)/commit/([a-f0-9]+)', commit_url)
-        if match:
-            return {
-                'repo_url': match.group(1),
-                'commit_hash': match.group(2)
+    if match:
+        return {
+            'repo_url': match.group(1),
+            'commit_hash': match.group(2)
             }
         return None
 
 def extract_repo_from_any_url(url):
     """Ekstraherer repo URL fra enhver GitHub URL (pull, issue, etc.)."""
-        match = re.match(r'(https://github\.com/[^/]+/[^/]+)', url)
-        return match.group(1) if match else None
+    match = re.match(r'(https://github\.com/[^/]+/[^/]+)', url)
+    return match.group(1) if match else None
 
 # bruke pydriller -> til å klone repo, hente commit metadata og diff/patch data (dette er fra URL)
 
 def fetch_commit_data(repo_url, commit_hash):
     """Bruker pydriller til å klone repo og hente commit metadata +
       diff/patcher."""
-        try:
+    try:
             for commit in Repository(repo_url,
                                      single=commit_hash).traverse_commits():
                     modified_files = []
