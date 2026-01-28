@@ -16,7 +16,7 @@ def fetch_patch_data(repo_url: str, commit_hash: str):
         parsed = parse_patch(patch_text)
 
         # Lager en strukturert representasjon av hver fil med nødvendige data
-        patch_data.append({
+        patch_data.append({      
             # Metadata
             "repo_url": repo_url,
             "commit_hash": commit_hash,
