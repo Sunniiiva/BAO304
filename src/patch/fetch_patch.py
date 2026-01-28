@@ -1,68 +1,43 @@
-# denne filen skal trekke ut og strukturere den rellevante dataen fra CVE
+from __future__ import annotations
 
-from collections import defaultdict
+from repo.fetch_commit import fetch_commit_modified_files
+from patch.parse_patch import parse_patch
+from patch.language_detection import detect_language_from_path
 
-# Funkjon som skal hente ut ID og tittel
-def extract_cve_info(cve_data):
-    cve_id = cve_data["cveMetadata"]["cveId"]
-    title = cve_data["containers"]["cna"]["title"]
-    return cve_id, title
+def fetch_patch_data(repo_url: str, commit_hash: str):
+    modified_files = fetch_commit_modified_files(repo_url, commit_hash) # Henter modified files objektet fra fetch_commit.py
+    patch_data = []
 
-# Funksjon som skal retunere en lisste med berørte produkter
-def extract_products(cve_data):
-    affected = cve_data["containers"]["cna"].get("affected", [])
-    return [entry["product"] for entry in affected]
+    # Går gjennom hver fil i modified_files
+    for file in modified_files:
+        file_path = file.get("file_path", "")
+        patch_text = file.get("patch_text")  
 
-# Funkjon som skal grupere referansene etter typen deres
-# commit, pull, issues, repo, Security-advisories
-def extract_grouped_references(cve_data):
-    refs = cve_data["containers"]["cna"].get("references", [])
-    grouped = defaultdict(list)
+        parsed = parse_patch(patch_text)
 
-    for ref in refs:
-        url = ref.get("url", "")
-        if "commit" in url:
-            grouped["commit"].append(url)
-        elif "pull" in url:
-            grouped["pull"].append(url)
-        elif "issues" in url:
-            grouped["issues"].append(url)
-        elif "repo" in url:
-            grouped["repo"].append(url)
-        else:
-            grouped["security-advisories"].append(url)
+        # Lager en strukturert representasjon av hver fil med nødvendige data
+        patch_data.append({      
+            # Metadata
+            "repo_url": repo_url,
+            "commit_hash": commit_hash,
+            "file_path": file_path,
+            "language": detect_language_from_path(file_path),
 
-    return grouped
+            # Counts
+            "added_lines": parsed["added_lines"],
+            "removed_lines": parsed["removed_lines"],
+            "changed_lines": parsed["changed_lines"],
+            "hunk_count": parsed["hunk_count"],
 
+            # Raw data
+            "patch_text": patch_text or "",
+            "before_code": parsed["before_code"],
+            "after_code": parsed["after_code"],
+        })
 
-# ------------ TEST FOR OUTPUT ------------------------ #
-
-if __name__ == "__main__":
-    from fetch_cve import load_cve_from_file
+    return patch_data
     
-    data = load_cve_from_file("../../data/raw/cve/CVE-2026-24001.json") 
-    
-    cve_id, title = extract_cve_info(data)
-    print(f"\n CVE ID:", cve_id)
-    print(f"Title:", title)
-    
-    products = extract_products(data)
-    print("\n PRODUCTS:")
-    for product in products:
-        print(f" - {product}")
-        
-        grouped_refs = extract_grouped_references(data)
-        print("\n REFRENCES (GROUPED BY TYPE):")
-        for category, urls in grouped_refs.items():
-            print(f"\n{category.upper()}:")
-            for url in urls:
-                print(f" - {url}")
-
-
-        
-
-
-
+# ??output: repo_url, commit_hash, file_path, added_lines, removed_lines, patch_text, before_code, after_code, language
 
 
 
