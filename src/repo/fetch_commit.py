@@ -57,8 +57,7 @@ def fetch_commit_data(repo_url, commit_hash):
     """Bruker pydriller til å klone repo og hente commit metadata +
       diff/patcher."""
     try:
-            for commit in Repository(repo_url,
-                                     single=commit_hash).traverse_commits():
+            for commit in Repository(repo_url, single=commit_hash).traverse_commits():
                     modified_files = []
                     for mod in commit.modified_files:
                         modified_files.append({
@@ -79,6 +78,6 @@ def fetch_commit_data(repo_url, commit_hash):
                     }
         except Exception as e:
             return {'error': str(e), 'repo_url': repo_url, 'commit_hash':
-            commit_hash}
+        commit_hash}
 
 # output: repo_url, commit_hash, commit_message, commit_date, modified_files, path, patch
