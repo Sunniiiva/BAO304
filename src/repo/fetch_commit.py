@@ -82,6 +82,7 @@ commit_hash}
 
 # output: repo_url, commit_hash, commit_message, commit_date, modified_files, path, patch
 
+<<<<<<< Updated upstream
 def process_cve_references(cve_data):
     """Tar CVE-objekt fra fetch_cve.py og returnerer strukturerte commit-data"""
     cve_id = cve_data.get('cve_id', 'unknown')
@@ -113,3 +114,5 @@ def save_results(results, cve_id):
         json.dump(results, f, indent=2, ensure_ascii=False)
     print(f"Saved to {filepath}")
     return filepath
+=======
+>>>>>>> Stashed changes
