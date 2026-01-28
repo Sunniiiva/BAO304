@@ -53,22 +53,50 @@ def extract_repo_from_any_url(url):
 
 # bruke pydriller -> til å klone repo, hente commit metadata og diff/patch data (dette er fra URL)
 
+#def fetch_commit_data(repo_url, commit_hash):
+ #   """Bruker pydriller til å klone repo og hente commit metadata +
+  #    diff/patcher."""
+   # try:
+    #        for commit in Repository(repo_url, single=commit_hash).traverse_commits():
+     #               modified_files = []
+      #              for mod in commit.modified_files:
+       #                 modified_files.append({
+        #                   'change_type': mod.change_type.name,
+         #                   'added_lines': mod.added_lines,
+          #                  'deleted_lines': mod.deleted_lines,
+           #                 'patch': mod.diff # Full diff/patch data
+            #            })
+#
+ #           return {
+  #              'repo_url': repo_url,
+   #             'commit_hash': commit.hash,
+    #            'commit_message': commit.msg,
+     #           'commit_date': commit.committer_date.isoformat(),
+      #          'author': commit.author.name,
+       #         'modified_files': modified_files
+        #    }
+  #  except Exception as e:
+   #     return {'error': str(e), 'repo_url': repo_url, 'commit_hash':
+#commit_hash}
 def fetch_commit_data(repo_url, commit_hash):
-    """Bruker pydriller til å klone repo og hente commit metadata +
-      diff/patcher."""
+    """Bruker pydriller til å klone repo og hente commit metadata + diff/patcher."""
+    print(f"Prøver å klone: {repo_url}")
+    print(f"Henter commit: {commit_hash}")
+    
     try:
-            for commit in Repository(repo_url, single=commit_hash).traverse_commits():
-                    modified_files = []
-                    for mod in commit.modified_files:
-                        modified_files.append({
-                            'path' : mod.new_path or mod.old_path,
-                            'change_type': mod.change_type.name,
-                            'added_lines': mod.added_lines,
-                            'deleted_lines': mod.deleted_lines,
-                            'patch': mod.diff # Full diff/patch data
-                        })
-
-            return {
+        for commit in Repository(repo_url, single=commit_hash).traverse_commits():
+            print(f"Commit funnet!")
+            modified_files = []
+            for mod in commit.modified_files:
+                modified_files.append({
+                    'path': mod.new_path or mod.old_path,
+                    'change_type': mod.change_type.name,
+                    'added_lines': mod.added_lines,
+                    'deleted_lines': mod.deleted_lines,
+                    'patch': mod.diff
+                })
+            
+            result = {
                 'repo_url': repo_url,
                 'commit_hash': commit.hash,
                 'commit_message': commit.msg,
@@ -76,9 +104,12 @@ def fetch_commit_data(repo_url, commit_hash):
                 'author': commit.author.name,
                 'modified_files': modified_files
             }
+            print(f"Data hentet: {len(modified_files)} filer endret")
+            return result
+            
     except Exception as e:
-        return {'error': str(e), 'repo_url': repo_url, 'commit_hash':
-commit_hash}
+        print(f"FEIL: {e}")
+        return {'error': str(e), 'repo_url': repo_url, 'commit_hash': commit_hash}
 
 # output: repo_url, commit_hash, commit_message, commit_date, modified_files, path, patch
 
