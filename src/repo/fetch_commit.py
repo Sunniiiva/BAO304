@@ -126,8 +126,6 @@ def save_results(results, cve_id):
     print(f"\nLagret til {filepath}")
     return filepath
 
-# HOVEDKJORING
-
 
 if __name__ == "__main__":
     import glob
