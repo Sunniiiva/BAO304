@@ -191,3 +191,6 @@ def get_patches_for_commit(conn: sqlite3.Connection, commit_sha: str):
         "SELECT * FROM patch WHERE commit_sha = ?",
         (commit_sha,),
     ).fetchall()
+# opprette SQLlite database
+# definere tabeller og relasjoner som CVE, repo, commit, patches, link mellom cve og commit
+# funskjoner for insert_cve, insert_commit, insert_patch
