@@ -3,7 +3,7 @@ import re
 import os
 from datetime import datetime
 from pydriller import Repository
-from src.cve.parce_cve import extract_grouped_references
+from src.cve.parse_cve import extract_grouped_references
 
 
 output_dir = 'data/raw/commits'
