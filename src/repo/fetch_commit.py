@@ -3,99 +3,59 @@ import re
 import os
 from datetime import datetime
 from pydriller import Repository
+from src.cve.parce_cve import extract_grouped_references
+
 
 output_dir = 'data/raw/commits'
 os.makedirs(output_dir, exist_ok=True)
 
-# Kalle på referanse objekt fra fetch_cve.py filen. 
 
-def classify_references(references):
-    """Sorterer referanser etter type: commit, pull, issue, security
-    advisory."""
-    classified = {
-            'commits': [],
-            'pulls': [],
-            'issues': [],
-            'security_advisories': [],
-            'other': []
-        }
-    
-    for url in references:
-        if '/commit/' in url:
-            classified['commits'].append(url)
-        elif '/pull/' in url:
-            classified['pulls'].append(url)
-        elif '/issues/' in url:
-            classified['issues'].append(url)
-        elif '/security/advisories/' in url:
-            classified['security_advisories'].append(url)
-        else:
-            classified['other'].append(url)
 
-    return classified
 
-# hente ut repo URL, og commit hash
+
+# Formål: Ekstrahere commit metadata og diffs fra GitHub repositories
+
+
 
 def extract_repo_and_hash(commit_url):
-    """Ekstraherer repo URL og commit hash fra Github commit URL."""
+    """
+    Trekker ut repository URL og commit hash fra en GitHub commit URL.
+    
+    """
     match = re.match(r'(https://github\.com/[^/]+/[^/]+)/commit/([a-f0-9]+)', commit_url)
     if match:
         return {
             'repo_url': match.group(1),
             'commit_hash': match.group(2)
-            }
-        return None
+        }
+    return None
 
-def extract_repo_from_any_url(url):
-    """Ekstraherer repo URL fra enhver GitHub URL (pull, issue, etc.)."""
-    match = re.match(r'(https://github\.com/[^/]+/[^/]+)', url)
-    return match.group(1) if match else None
 
-# bruke pydriller -> til å klone repo, hente commit metadata og diff/patch data (dette er fra URL)
-
-#def fetch_commit_data(repo_url, commit_hash):
- #   """Bruker pydriller til å klone repo og hente commit metadata +
-  #    diff/patcher."""
-   # try:
-    #        for commit in Repository(repo_url, single=commit_hash).traverse_commits():
-     #               modified_files = []
-      #              for mod in commit.modified_files:
-       #                 modified_files.append({
-        #                   'change_type': mod.change_type.name,
-         #                   'added_lines': mod.added_lines,
-          #                  'deleted_lines': mod.deleted_lines,
-           #                 'patch': mod.diff # Full diff/patch data
-            #            })
-#
- #           return {
-  #              'repo_url': repo_url,
-   #             'commit_hash': commit.hash,
-    #            'commit_message': commit.msg,
-     #           'commit_date': commit.committer_date.isoformat(),
-      #          'author': commit.author.name,
-       #         'modified_files': modified_files
-        #    }
-  #  except Exception as e:
-   #     return {'error': str(e), 'repo_url': repo_url, 'commit_hash':
-#commit_hash}
 def fetch_commit_data(repo_url, commit_hash):
-    """Bruker pydriller til å klone repo og hente commit metadata + diff/patcher."""
-    print(f"Prøver å klone: {repo_url}")
-    print(f"Henter commit: {commit_hash}")
+    """
+    Henter commit metadata og filendringer ved hjelp av PyDriller.
+    
+    """
+    print(f"  Prøver å klone: {repo_url}")
+    print(f"  Henter commit: {commit_hash}")
     
     try:
+        # PyDriller håndterer automatisk repository kloning og caching
         for commit in Repository(repo_url, single=commit_hash).traverse_commits():
-            print(f"Commit funnet!")
+            print(f"  Commit funnet")
             modified_files = []
+            
+            # Prosesser hver modifisert fil i commiten
             for mod in commit.modified_files:
                 modified_files.append({
-                    'path': mod.new_path or mod.old_path,
-                    'change_type': mod.change_type.name,
+                    'file_path': mod.new_path or mod.old_path,  # Håndterer renames/deletions
+                    'change_type': mod.change_type.name,        # ADD, MODIFY, DELETE, RENAME
                     'added_lines': mod.added_lines,
                     'deleted_lines': mod.deleted_lines,
-                    'patch': mod.diff
+                    'patch_text': mod.diff  # Full unified diff output
                 })
             
+            # Strukturer data for videre prosessering (Sunniva sin patch modul)
             result = {
                 'repo_url': repo_url,
                 'commit_hash': commit.hash,
@@ -104,43 +64,102 @@ def fetch_commit_data(repo_url, commit_hash):
                 'author': commit.author.name,
                 'modified_files': modified_files
             }
-            print(f"Data hentet: {len(modified_files)} filer endret")
+            print(f"  Data hentet: {len(modified_files)} filer modifisert")
             return result
             
     except Exception as e:
-        print(f"FEIL: {e}")
+        # Returner feilinformasjon for debugging/logging
+        print(f"  FEIL: {e}")
         return {'error': str(e), 'repo_url': repo_url, 'commit_hash': commit_hash}
 
-# output: repo_url, commit_hash, commit_message, commit_date, modified_files, path, patch
+
+def fetch_commit_modified_files(repo_url, commit_hash):
+    """
+    Hjelpefunksjon for patch processing modulen (Sunniva sin fetch_patch.py).
+
+    """
+    commit_data = fetch_commit_data(repo_url, commit_hash)
+    
+    # Håndter feil ved å returnere tom array
+    if 'error' in commit_data:
+        return []
+    
+    return commit_data.get('modified_files', [])
+
 
 def process_cve_references(cve_data):
-    """Tar CVE-objekt fra fetch_cve.py og returnerer strukturerte commit-data"""
-    cve_id = cve_data.get('cve_id', 'unknown')
-    references = cve_data.get('references', [])
+    """
+    Prosesserer alle commit referanser fra en CVE record.
+
+    """
+    cve_id = cve_data.get('cveMetadata', {}).get('cveId', 'unknown')
     
-    # Klassifiserer
-    classified = classify_references(references)
+    
+    # Returnerer dict med nøkler: 'commit', 'pull', 'issues', 'security-advisories'
+    grouped_refs = extract_grouped_references(cve_data)
     
     results = {
         'cve_id': cve_id,
-        'classified_refs': classified,
+        'classified_refs': grouped_refs,
         'commit_data': []
     }
     
-    # Henter data for hver commit-URL
-    for commit_url in classified['commits']:
+    # Prosesser hver commit referanse
+    for commit_url in grouped_refs.get('commit', []):
         info = extract_repo_and_hash(commit_url)
         if info:
-            print(f"Fetching: {info['commit_hash'][:8]}... from {info['repo_url']}")
+            print(f"\nHenter commit: {info['commit_hash'][:8]}...")
             commit_data = fetch_commit_data(info['repo_url'], info['commit_hash'])
             results['commit_data'].append(commit_data)
-            
+    
     return results
 
+
 def save_results(results, cve_id):
-    """Lagre til JSON."""
+    """
+    Lagrer commit data til JSON fil.
+
+    """
     filepath = os.path.join(output_dir, f"{cve_id}_commits.json")
     with open(filepath, 'w', encoding='utf-8') as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
-    print(f"Saved to {filepath}")
+    print(f"\nLagret til {filepath}")
     return filepath
+
+
+if __name__ == "__main__":
+    import glob
+    from src.cve.fetch_cve import load_cve_from_file
+    
+    # Forsøk å prosessere alle CVE filer i data directory
+    cve_files = glob.glob('data/raw/cve/*.json')
+    
+    if not cve_files:
+        print("ADVARSEL: Ingen CVE filer funnet i data/raw/cve/")
+        print("Bruker hardkodet testdata for demonstrasjon...")
+        
+        # Fallback testdata som matcher NVD JSON format
+        test_cve = {
+            "cveMetadata": {"cveId": "CVE-2026-24001"},
+            "containers": {
+                "cna": {
+                    "references": [
+                        {"url": "https://github.com/kpdecker/jsdiff/commit/15a1585230748c8ae6f8274c202e0c87309142f5"}
+                    ]
+                }
+            }
+        }
+        results = process_cve_references(test_cve)
+        save_results(results, test_cve['cveMetadata']['cveId'])
+    else:
+        print(f"Prosesserer {len(cve_files)} CVE filer...\n")
+        
+        # Prosesser hver CVE fil sekvensiellt
+        for cve_file in cve_files:
+            print(f"Leser: {cve_file}")
+            cve_data = load_cve_from_file(cve_file)  
+            
+            results = process_cve_references(cve_data)
+            save_results(results, results['cve_id'])
+    
+    print("\nProsessering fullført.")
