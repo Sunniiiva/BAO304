@@ -10,11 +10,11 @@ output_dir = 'data/raw/commits'
 os.makedirs(output_dir, exist_ok=True)
 
 
-# ===========================================================================
-# REPOSITORY OG COMMIT ANALYSE MODUL
-# Forfatter: Mikal
+
+
+
 # Formål: Ekstrahere commit metadata og diffs fra GitHub repositories
-# ===========================================================================
+
 
 
 def extract_repo_and_hash(commit_url):
@@ -94,7 +94,7 @@ def process_cve_references(cve_data):
     """
     cve_id = cve_data.get('cveMetadata', {}).get('cveId', 'unknown')
     
-    # Bruk Isra sin referanse klassifiseringsfunksjon
+    
     # Returnerer dict med nøkler: 'commit', 'pull', 'issues', 'security-advisories'
     grouped_refs = extract_grouped_references(cve_data)
     
@@ -105,7 +105,6 @@ def process_cve_references(cve_data):
     }
     
     # Prosesser hver commit referanse
-    # Merk: Isra sitt format bruker 'commit' (entall) ikke 'commits'
     for commit_url in grouped_refs.get('commit', []):
         info = extract_repo_and_hash(commit_url)
         if info:
@@ -160,7 +159,7 @@ if __name__ == "__main__":
         # Prosesser hver CVE fil sekvensiellt
         for cve_file in cve_files:
             print(f"Leser: {cve_file}")
-            cve_data = load_cve_from_file(cve_file)  # Isra sin loader funksjon
+            cve_data = load_cve_from_file(cve_file)  
             
             results = process_cve_references(cve_data)
             save_results(results, results['cve_id'])
