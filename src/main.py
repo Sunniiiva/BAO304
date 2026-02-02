@@ -1,6 +1,8 @@
-from cve import fetch_cve
-from repo import fetch_commit
 
+from cve.fetch_cve import load_cve_from_file
+from repo.fetch_commit import extract_repo_and_hash
+from patch.fetch_patch import fetch_patch_data
+from db.database import init_db
 import typer 
 
 app = typer.Typer()
@@ -21,7 +23,7 @@ def hello():
 # kalle moduler i rekkefølge: fetch_cve, fetch_commit, fetch_patch.
 @app.command()
 def kallmoduler():
-    """kaller fetch_cve, fetch_commit, fetch_patch"""
+    data = load_cve_from_file("../../data/raw/cve/CVE-2026-24001.json")
     
 
 
