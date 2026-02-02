@@ -50,3 +50,16 @@ def fetch_commit_data(repo_url, commit_hash):
         }
     except Exception as e:
         return {'error': f'Feil ved henting: {str(e)}'}
+    
+def fetch_commit_modified_files(repo_url, commit_hash):
+    """
+    Hjelpefunksjon for fetch_patch.py (Sunniva):
+    Hent kun modified_files fra commit - uten full commit data.
+    """
+    commit_data = fetch_commit_data(repo_url, commit_hash)
+    
+    # Returner tom liste ved error
+    if 'error' in commit_data:
+        return []
+    
+    return commit_data.get('modified_files', [])
