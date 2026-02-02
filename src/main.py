@@ -1,9 +1,36 @@
 
-from cve.fetch_cve import load_cve_from_file
-from repo.fetch_commit import extract_repo_and_hash
-from patch.fetch_patch import fetch_patch_data
-from db.database import init_db
-import typer 
+import glob
+import typer
+from pathlib import Path
+
+# CVE
+
+from cve import (
+    load_cve_from_file,
+    extract_cve_info,
+    extract_products,
+   extract_grouped_references,)
+
+ #Repo / commits
+from repo import (
+    extract_repo_and_hash,
+    fetch_commit_data, 
+    fetch_commit_modified_files,)
+
+# Patch
+#from src.patch import fetch_patch_data
+
+# Database
+#from src.db import (
+ ##   connect,
+  #  init_db,
+  #  upsert_cve,
+  #  upsert_commit,
+ #   insert_patch,
+ #   link_cve_commit,
+#)
+
+
 
 app = typer.Typer()
 
