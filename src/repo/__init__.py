@@ -1,5 +1,5 @@
 """
-repo package
+Repo package
 
 Ansvar:
 - Hente commit-data fra repositories (via PyDriller)
@@ -7,18 +7,18 @@ Ansvar:
 - Tilby hjelpefunksjoner for patch-modulen
 """
 
-from .fetch_commit import (
+# Kun eksponer OFFENTLIG API fra riktige moduler
+from .utils import (
     extract_repo_and_hash,
-    fetch_commit_data,
-    fetch_commit_modified_files,
-    process_cve_references,
-    save_results,
+    fetch_commit_data
+)
+
+from .parse_commit import (
+    process_cve_references
 )
 
 __all__ = [
     "extract_repo_and_hash",
-    "fetch_commit_data",
-    "fetch_commit_modified_files",
-    "process_cve_references",
-    "save_results",
+    "fetch_commit_data", 
+    "process_cve_references"
 ]
