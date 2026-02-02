@@ -10,7 +10,8 @@ Ansvar:
 # Kun eksponer OFFENTLIG API fra riktige moduler
 from .utils import (
     extract_repo_and_hash,
-    fetch_commit_data
+    fetch_commit_data,
+    fetch_commit_modified_files
 )
 
 from .parse_commit import (
@@ -19,6 +20,7 @@ from .parse_commit import (
 
 __all__ = [
     "extract_repo_and_hash",
-    "fetch_commit_data", 
+    "fetch_commit_data",
+    "fetch_commit_modified_files", 
     "process_cve_references"
 ]
