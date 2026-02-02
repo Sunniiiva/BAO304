@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from repo.fetch_commit import fetch_commit_modified_files
+from repo.utils import fetch_commit_modified_files
 from patch.parse_patch import parse_patch
 from patch.language_detection import detect_language_from_path
 
