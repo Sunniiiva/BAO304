@@ -50,13 +50,34 @@ def hello():
 # kalle moduler i rekkefølge: fetch_cve, fetch_commit, fetch_patch.
 @app.command()
 def kallmoduler():
-    data = load_cve_from_file("../../data/raw/cve/CVE-2026-24001.json")
+# henter ut data fra raw fil
+    data = load_cve_from_file("data/raw/cve/CVE-2026-24001.json")
+# sorterer data via parse_cve
+try :
+    extract_cve_info(data)
+    extract_products(data)
+    extract_grouped_references(data)
+    repo_urls = extract_grouped_references
+    print("repo url: ", repo_urls)
+
+except Exception as e:
+    print(f"Unexpected error: {e}")
+    raise
+
+
+
+
+
+
+
+
+    
+    
     
 
 
 
-
-if __name__ == "__main__":
+if __name__ == "__main__": 
     app()
  
 
