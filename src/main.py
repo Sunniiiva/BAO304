@@ -5,30 +5,30 @@ from pathlib import Path
 
 # CVE
 
-from cve import (
+from src.cve import (
     load_cve_from_file,
     extract_cve_info,
     extract_products,
    extract_grouped_references,)
 
  #Repo / commits
-from repo import (
+from src.repo import (
     extract_repo_and_hash,
     fetch_commit_data, 
     fetch_commit_modified_files,)
 
 # Patch
-#from src.patch import fetch_patch_data
+from src.patch import fetch_patch_data
 
 # Database
-#from src.db import (
- ##   connect,
-  #  init_db,
-  #  upsert_cve,
-  #  upsert_commit,
- #   insert_patch,
- #   link_cve_commit,
-#)
+from src.db import (
+    connect,
+    init_db,
+    upsert_cve,
+    upsert_commit,
+    insert_patch,
+    link_cve_commit,
+)
 
 
 
