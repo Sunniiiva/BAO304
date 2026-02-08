@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from repo.fetch_commit import fetch_commit_modified_files
-from patch.parse_patch import parse_patch
-from patch.language_detection import detect_language_from_path
+from src.repo.utils import fetch_commit_modified_files
+from src.patch.parse_patch import parse_patch
+from src.patch.language_detection import detect_language_from_path
 
 
 def fetch_patch_data(repo_url: str, commit_sha: str) -> list[dict]:
