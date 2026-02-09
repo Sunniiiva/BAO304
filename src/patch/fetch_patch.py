@@ -29,7 +29,7 @@ def fetch_patch_data(repo_url: str, commit_sha: str) -> list[dict]:
 
         patch_data.append(
             {
-                # Metadata (aligned with DB)
+                # Metadata
                 "repo_url": repo_url,
                 "commit_sha": commit_sha,
                 "file_path": file_path,
@@ -41,7 +41,7 @@ def fetch_patch_data(repo_url: str, commit_sha: str) -> list[dict]:
                 "changed_lines": parsed.get("changed_lines", 0),
                 "hunk_count": parsed.get("hunk_count", 0),
 
-                # Raw data (aligned with DB)
+                # Raw data 
                 "diff_text": patch_text or "",
                 "before_code": parsed.get("before_code", ""),
                 "after_code": parsed.get("after_code", ""),
@@ -49,9 +49,3 @@ def fetch_patch_data(repo_url: str, commit_sha: str) -> list[dict]:
         )
 
     return patch_data
-
-
-# Output (keys):
-# repo_url, commit_sha, file_path, language,
-# added_lines, removed_lines, changed_lines, hunk_count,
-# diff_text, before_code, after_code

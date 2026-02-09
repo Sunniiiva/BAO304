@@ -69,7 +69,7 @@ def fetch_commit_data(repo_url, commit_hash):
                 deleted = getattr(getattr(file, 'diff_stats', None), 'deletions', 0) if hasattr(file, 'diff_stats') else 0
                 
                 files_data.append({
-                    'filename': file.new_path or file.old_path or 'unknown',
+                    'file_path': file.new_path or file.old_path or 'unknown',
                     'change_type': str(file.change_type) if hasattr(file, 'change_type') else 'unknown',
                     'patch_text': diff_text,
                     'lines_added': added,
@@ -78,7 +78,7 @@ def fetch_commit_data(repo_url, commit_hash):
             except Exception as file_err:
                 # Fallback hvis fil-parsing feiler
                 files_data.append({
-                    'filename': file.new_path or file.old_path or 'unknown',
+                    'file_path': file.new_path or file.old_path or 'unknown',
                     'change_type': 'unknown',
                     'patch_text': '',
                     'lines_added': 0,
