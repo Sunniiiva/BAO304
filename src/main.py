@@ -127,6 +127,7 @@ def ingest():
             link_cve_commit(
                 conn,
                 cve_id=cve_id,
+                repo_url=commit.get('repo_url'),
                 commit_sha=sha,
                 method="message_regex",
                 confidence=1.0 if commit.get("mentions_target_cve") else 0.5,
