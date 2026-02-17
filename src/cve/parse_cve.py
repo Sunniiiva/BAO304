@@ -4,9 +4,28 @@ from collections import defaultdict
 
 # Funkjon som skal hente ut ID og tittel
 def extract_cve_info(cve_data):
-    cve_id = cve_data["cveMetadata"]["cveId"]
-    title = cve_data["containers"]["cna"]["title"]
+    meta = cve_data.get("cveMetadata", {})
+    cve_id = meta.get("cveId", "unknown")
+    state = meta.get("state", "")
+
+    cna = cve_data.get("containers", {}).get("cna", {})
+
+    # Normal tittel hvis den finnes
+    title = cna.get("title")
+
+    # REJECTED: lag en tittel fra rejectedReasons
+    if not title and state == "REJECTED":
+        reasons = cna.get("rejectedReasons", [])
+        reason = reasons[0].get("value") if reasons else None
+        title = f"REJECTED: {reason}" if reason else "REJECTED"
+
+    # Fallback: bruk første beskrivelse som “tittel”
+    if not title:
+        descs = cna.get("descriptions", [])
+        title = (descs[0].get("value") if descs else None) or "Uten tittel"
+
     return cve_id, title
+
 
 # Funksjon som skal retunere en lisste med berørte produkter
 def extract_products(cve_data):

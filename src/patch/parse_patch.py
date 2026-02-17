@@ -16,69 +16,38 @@ _DIFF_META_PREFIXES = (
 )
 
 
-def parse_patch(patch_text: Optional[str]) -> Dict[str, Any]:
-   
-    # Håndterer tomme patch-tekster
-    if not patch_text:
-        return {
-            "added_lines": 0,
-            "removed_lines": 0,
-            "changed_lines": 0,
-            "hunk_count": 0,
-            "before_code": "",
-            "after_code": "",
-        }
+def parse_patch(patch_text: str | None) -> dict:
+    patch_text = patch_text or ""
 
-    added_lines = 0
-    removed_lines = 0
+    before_lines = []
+    after_lines = []
+    added = removed = 0
     hunk_count = 0
 
-    before_code: list[str] = []
-    after_code: list[str] = []
-
-    # Går gjennom hver linje i patch-teksten
     for line in patch_text.splitlines():
-        #Hopper over linjer som bare inneholder "\ No newline at end of file"
-        if line.startswith("\\"):
+        # skip diff headers
+        if line.startswith(("diff --git", "index ", "---", "+++", "@@")):
+            if line.startswith("@@"):
+                hunk_count += 1
             continue
 
-        # Hopper over hunk header linjer og teller hunks
-        if line.startswith("@@"):
-            hunk_count += 1
-            continue
-
-        # Hopper over diff metadata
-        if any(line.startswith(p) for p in _DIFF_META_PREFIXES):
-            continue
-
-        # Added line
-        if line.startswith("+"):
-            added_lines += 1
-            after_code.append(line[1:])
-            continue
-
-        # Removed line
-        if line.startswith("-"):
-            removed_lines += 1
-            before_code.append(line[1:])
-            continue
-
-        # Context line
-        if line.startswith(" "):
-            content = line[1:]
+        if line.startswith("+") and not line.startswith("+++"):
+            added += 1
+            after_lines.append(line[1:])
+        elif line.startswith("-") and not line.startswith("---"):
+            removed += 1
+            before_lines.append(line[1:])
         else:
-            content = line
+            # kontekstlinjer ignoreres (eller ta de med hvis du vil ha mer)
+            pass
 
-        before_code.append(content)
-        after_code.append(content)
+    changed = added + removed
 
-    # Returnerer parsed data
     return {
-        "added_lines": added_lines,
-        "removed_lines": removed_lines,
-        "changed_lines": added_lines + removed_lines,
+        "added_lines": added,
+        "removed_lines": removed,
+        "changed_lines": changed,
         "hunk_count": hunk_count,
-        "before_code": "\n".join(before_code),
-        "after_code": "\n".join(after_code),
+        "before_code": "\n".join(before_lines),
+        "after_code": "\n".join(after_lines),
     }
-
