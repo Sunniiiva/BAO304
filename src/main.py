@@ -127,6 +127,7 @@ def ingest():
             link_cve_commit(
                 conn,
                 cve_id=cve_id,
+                repo_url=commit.get('repo_url'),
                 commit_sha=sha,
                 repo_url=commit.get("repo_url",""),
                 method="message_regex",
