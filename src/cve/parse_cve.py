@@ -11,21 +11,11 @@ from urllib.parse import urlparse
 #----------------------------------
 
 def extract_cve_info(cve_data):
-    
-    # Henter ut ID og tittel
-    cve_id = cve_data.get("cveMetadata", {}).get("cveId", "")
-    title = (
-        cve_data
-        .get("containers", {})
-        .get("cna", {})
-        .get("title", "")
-    )
+    cve_id = cve_data["cveMetadata"]["cveId"]
+    title = cve_data["containers"]["cna"]["title"]
     return cve_id, title
 
-#----------------------------------
-# Funksjon for Products
-#---------------------------------
-
+# Funksjon som skal retunere en lisste med berørte produkter
 def extract_products(cve_data):
     
     # Retunerer en lisste over berørte produkter. 
