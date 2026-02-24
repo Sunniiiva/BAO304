@@ -129,6 +129,7 @@ def ingest():
                 cve_id=cve_id,
                 repo_url=commit.get('repo_url'),
                 commit_sha=sha,
+                repo_url=commit.get("repo_url",""),
                 method="message_regex",
                 confidence=1.0 if commit.get("mentions_target_cve") else 0.5,
             )
@@ -137,17 +138,21 @@ def ingest():
 
             # Hent patch-data for denne committen
             try:
-                patch_list = fetch_patch_data(commit.get('repo_url', ''), sha)
+                patch_list = fetch_patch_data(commit.get("repo_url", ""), sha)
                 for patch in patch_list:
-                    insert_patch(
+                   insert_patch(
                         conn,
-                        commit_sha=sha,
+                        repo_url=patch["repo_url"],
+                        commit_sha=patch["commit_sha"],
                         file_path=patch["file_path"],
                         language=patch["language"],
                         added_lines=patch["added_lines"],
                         removed_lines=patch["removed_lines"],
-                        diff_text=patch["patch_text"],
-                    )
+                        hunk_count=patch.get("hunk_count"),
+                        diff_text=patch["diff_text"],
+                        before_code=patch.get("before_code"),
+                        after_code=patch.get("after_code"),
+    )
                 typer.echo(f"      {len(patch_list)} patch(er) lagret")
             except Exception as e:
                 typer.echo(f"      Patch-henting feilet: {e}")

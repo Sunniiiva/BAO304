@@ -8,7 +8,6 @@ from src.patch.language_detection import detect_language_from_path
 def fetch_patch_data(repo_url: str, commit_sha: str) -> list[dict]:
     """
     Fetch and parse patch data for all modified files in a commit.
-
     Returns a list of dicts. Keys are aligned with database naming:
     - repo_url
     - commit_sha
@@ -26,6 +25,9 @@ def fetch_patch_data(repo_url: str, commit_sha: str) -> list[dict]:
         patch_text = file.get("patch_text")
 
         parsed = parse_patch(patch_text)
+        
+        before_code = file.get("before_code") or parsed.get("before_code", "")
+        after_code = file.get("after_code") or parsed.get("after_code", "")
 
         patch_data.append(
             {
@@ -42,9 +44,9 @@ def fetch_patch_data(repo_url: str, commit_sha: str) -> list[dict]:
                 "hunk_count": parsed.get("hunk_count", 0),
 
                 # Raw data 
-                "diff_text": patch_text or "",
-                "before_code": parsed.get("before_code", ""),
-                "after_code": parsed.get("after_code", ""),
+                "diff_text": patch_text,
+                "before_code": before_code,
+                "after_code": after_code,
             }
         )
 
