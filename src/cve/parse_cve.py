@@ -1,56 +1,77 @@
-# denne filen skal trekke ut og strukturere den rellevante dataen fra CVE
-
-from collections import defaultdict
-import re 
+import re
 from urllib.parse import urlparse
 
-
-
-#----------------------------------
-# Funkjon for CVE informasjon
-#----------------------------------
-
+# ----------------------------------
+# Funksjon for CVE informasjon
+# ----------------------------------
 def extract_cve_info(cve_data):
-    cve_id = cve_data["cveMetadata"]["cveId"]
-    title = cve_data["containers"]["cna"]["title"]
+
+    cve_id = cve_data.get("cveMetadata", {}).get("cveId", "UNKNOWN")
+
+    cna = cve_data.get("containers", {}).get("cna", {})
+    title = cna.get("title")
+
+    # Hvis CNA-title mangler, bruk første description
+    if not title:
+        descriptions = cna.get("descriptions", [])
+        if descriptions:
+            title = descriptions[0].get("value", "No title available")
+        else:
+            title = "No title available"
+
     return cve_id, title
 
-# Funksjon som skal retunere en lisste med berørte produkter
+
+#--------------------------------------------
+# Funkjon som viser STATE data til cve filen
+#---------------------------------------------
+def extract_state(cve_data):
+    return cve_data.get("cveMetadata", {}).get("state", "UNKNOWN")
+                                               
+                                               
+# ----------------------------------
+# Funksjon for Products
+# ----------------------------------
 def extract_products(cve_data):
-    
-    # Retunerer en lisste over berørte produkter. 
+
     affected = (
         cve_data
         .get("containers", {})
         .get("cna", {})
         .get("affected", [])
-        )
-    return [entry.get("product", "") for entry in affected if entry.get("product")]
+    )
 
-#----------------------------
-# Funkjson for Description
-#----------------------------
+    return [
+        entry.get("product", "")
+        for entry in affected
+        if entry.get("product")
+    ]
+
+# ------------------------------------------
+# Funksjon for Description: henter ut navnene 
+# på produktene som er berørt av sårbarheten
+# -------------------------------------------
 def extract_description(cve_data, lang="en"):
-    # henter CVE beskrivelse bassert på språk
 
-    description = (
+    descriptions = (
         cve_data
         .get("containers", {})
         .get("cna", {})
         .get("descriptions", [])
     )
-    
-    for desc in description:
-        if desc.get("lang", "") == lang:
-            return desc.get("value", "Description is not available")
-    
-    return "Description is not collected"
 
-#-------------------------
-# Funkjson for CWE ID
-#-------------------------
+    for desc in descriptions:
+        if desc.get("lang", "") == lang:
+            return desc.get("value", "Description not available")
+
+    return "Description not collected"
+
+
+# ---------------------------------------------------------------------
+# Funksjon for CWE ID: Henter ut alle CWE-IDer som er knyttet til CVEen
+# ----------------------------------------------------------------------
 def extract_cwe_ids(cve_data):
-    # Henter alle unike CWE-id fra problemTypes
+
     cwe_ids = set()
 
     problem_types = (
@@ -68,36 +89,55 @@ def extract_cwe_ids(cve_data):
 
     return list(cwe_ids)
 
-    
-#-------------------------------------------
-# Funkjonfor å hente CVSS score og severity
-#---------------------------------------------
+
+# --------------------------------------------
+# Funksjon for CVSS score og severity:        
+# Henter CVSS-score og serverity fra en CVE,  
+# og velder den høyeste versjonen automatisk  
+# ---------------------------------------------
 def extract_cvss_score(cve_data):
-    
-    metrics = (
+
+    metrics_list = (
         cve_data
         .get("containers", {})
         .get("cna", {})
-        .get("metrics", {})
-    )   
-    
-    for metrics in metrics:
-        if "cvssV4_0" in metrics:
-            cvss = metrics["cvssV4_0"]
-            return {
-                "score": cvss.get("baseScore"),
-                "severity": cvss.get("baseSeverity"),
-                "vector": cvss.get("vectorString"),
-                "version": cvss.get("version")
-            }
-        return None
-#-----------------------------
-# Funksjon for refrences
-#-----------------------------
+        .get("metrics", [])
+    )
 
+    best_cvss = None
+    best_version = 0.0  # start på 0, ikke None
+
+    for metric in metrics_list:
+        for key, value in metric.items():
+
+            # Sjekk at nøkkelen starter med "cvssV"
+            if key.startswith("cvssV") and isinstance(value, dict):
+
+                version = value.get("version", "")
+
+                try:
+                    version_number = float(version)
+                except (ValueError, TypeError):
+                    continue
+
+                # Velg høyeste versjon
+                if version_number > best_version:
+                    best_version = version_number
+                    best_cvss = {
+                        "score": value.get("baseScore"),
+                        "severity": value.get("baseSeverity"),
+                        "vector": value.get("vectorString"),
+                        "version": version
+                    }
+
+    return best_cvss
+
+# ------------------------------------------------------------
+# Funksjon for å grupere referanser
+# Grupperer CVE-referanser etter type
+# Brukes for å identifisere commits til videre patch-analye
+# -------------------------------------------------------------
 def extract_grouped_references(cve_data):
-    # grupperer referanser etter typene deres
-
     refs = (
         cve_data
         .get("containers", {})
@@ -108,31 +148,26 @@ def extract_grouped_references(cve_data):
     grouped = {
         "commit": [],
         "pull": [],
-        "issues": [],
-        "repo": [],
         "security-advisories": [],
         "other": []
     }
 
     for ref in refs:
-        url = ref.get("url", "")
+        url = ref.get("url")
+
+        if not url:
+            continue
+
         parsed = urlparse(url)
         path = parsed.path.lower()
 
-        # presis commit identifikasjon
-        if re.search(r"/commit/[0-9a-f]{40}/?", path):
+        if "/commit/" in path:
             grouped["commit"].append(url)
 
-        elif re.search(r"/pull/\d+", path):
+        elif "/pull/" in path:
             grouped["pull"].append(url)
 
-        elif re.search(r"/issues/\d+", path):
-            grouped["issues"].append(url)
-
-        elif re.search(r"/repo/\d+", path):
-            grouped["repo"].append(url)
-
-        elif re.search(r"/security/advisories/", path):
+        elif "/security/advisories/" in path:
             grouped["security-advisories"].append(url)
 
         else:
@@ -141,105 +176,133 @@ def extract_grouped_references(cve_data):
     return grouped
 
 
-#--------------------------------
-# Funksjon for enkel validering av CVE-data
-#--------------------------------
+# ----------------------------------
+# Enkel validering av CVE-data
+# ----------------------------------
+
 def validate_cve_data(cve_data):
-    
+
     if not isinstance(cve_data, dict):
-        return False, "CVE data must be a dictonary"
-    
+        return False, "CVE data must be a dictionary"
+
     required_top_fields = ["dataType", "dataVersion", "cveMetadata", "containers"]
+
     for field in required_top_fields:
         if field not in cve_data:
             return False, f"Missing top-level field: {field}"
-        
-# Validere CVE-ID format
+
     cve_id = cve_data.get("cveMetadata", {}).get("cveId", "")
-    if not re.match(r"CVE-\d{4}-\d{4,7}", cve_id):
+
+    # sjekker at CVE id har riktig format
+    if not re.match(r"^CVE-\d{4}-\d{4,7}$", cve_id):
         return False, "Invalid CVE ID format"
-    
-# Sjekk at CNA-containers finnes
+      
+      # Sjekker at containers.cna finnes
     if "cna" not in cve_data.get("containers", {}):
         return False, "Missing containers.cna section"
-    
+     
     return True, "Validation passed"
 
+# ----------------------------------------------------
+# Test for og se hvordan koden kan kjøre i terminal (main.py)
+# ------------------------------------------------------
 
-
-# ---------------------------
-# Test-blokk
-# ---------------------------
 if __name__ == "__main__":
 
+    from pathlib import Path
     from src.cve.fetch_cve import load_cve_from_file
 
-    # Last inn CVE-fil
-    data = load_cve_from_file("data/raw/cve/CVE-2026-24001.json")
+    cve_folder = Path("data/raw/cve")
 
-    # ---------------------------
-    # 1. Valider data først
-    # ---------------------------
-    is_valid, message = validate_cve_data(data)
-
-    if not is_valid:
-        print(f"Validation failed: {message}")
+    if not cve_folder.exists():
+        print("CVE-mappen finnes ikke.")
         exit()
 
-    print("Validation successful!\n")
+    total_files = 0
+    processed = 0
+    skipped_rejected = 0
+    skipped_invalid = 0
 
-    # ---------------------------
-    # 2. Grunnleggende CVE-info
-    # ---------------------------
-    cve_id, title = extract_cve_info(data)
-    print("CVE INFO:")
-    print(f"ID: {cve_id}")
-    print(f"Title: {title}")
+    for file in cve_folder.glob("*.json"):
 
-    # ---------------------------
-    # 3. CWE
-    # ---------------------------
-    print("\nCWE IDs:")
-    cwe_ids = extract_cwe_ids(data)
-    for cwe in cwe_ids:
-        print(f"  - {cwe}")
+        total_files += 1
 
-    # ---------------------------
-    # 4. CVSS
-    # ---------------------------
-    print("\nCVSS INFO:")
-    cvss = extract_cvss_score(data)
+        print("\n" + "=" * 60)
+        print(f"Processing: {file.name}")
+        print("=" * 60)
 
-    if cvss:
-        print(f"Score: {cvss['score']}")
-        print(f"Severity: {cvss['severity']}")
-        print(f"Vector: {cvss['vector']}")
-        print(f"Version: {cvss['version']}")
-    else:
-        print("No CVSS data found")
+        try:
+            data = load_cve_from_file(file)
 
-    # ---------------------------
-    # 5. References
-    # ---------------------------
-    print("\nREFERENCES:")
-    refs = extract_grouped_references(data)
+            # -------------------
+            # 1. Valider
+            # -------------------
+            is_valid, message = validate_cve_data(data)
+            if not is_valid:
+                print(f"Skipping (validation failed): {message}")
+                skipped_invalid += 1
+                continue
 
-    for category, urls in refs.items():
-        if urls:
-            print(f"\n{category.upper()}:")
-            for url in urls:
-                print(f"  - {url}")
+            # -------------------
+            # 2. Hent metadata
+            # -------------------
+            cve_id, title = extract_cve_info(data)
+            state = extract_state(data)
 
-    # ---------------------------
-    # 6. Products
-    # ---------------------------
-    print("\nPRODUCTS:")
-    products = extract_products(data)
-    for product in products:
-        print(f"  - {product}")
+            # -------------------
+            # 3. Hopp over REJECTED
+            # -------------------
+            if state == "REJECTED":
+                print(f"\nID: {cve_id}")
+                print("State: REJECTED")
+                print("Skipping REJECTED CVE")
+                skipped_rejected += 1
+                continue
 
-    # ---------------------------
-    # 7. Description
-    # ---------------------------
-    print("\nDESCRIPTION:")
-    print(extract_description(data))
+            # -------------------
+            # 4. Print grunninfo
+            # -------------------
+            print(f"\nID: {cve_id}")
+            print(f"State: {state}")
+            print(f"Title: {title}")
+
+            # -------------------
+            # 5. CWE
+            # -------------------
+            cwe_ids = extract_cwe_ids(data)
+            print(f"CWE: {', '.join(cwe_ids) if cwe_ids else 'None'}")
+
+            # -------------------
+            # 6. CVSS
+            # -------------------
+            cvss = extract_cvss_score(data)
+            if cvss:
+                print(f"CVSS Score: {cvss['score']} ({cvss['severity']})")
+            else:
+                print("CVSS: Not available")
+
+            # -------------------
+            # 7. References
+            # -------------------
+            grouped_refs = extract_grouped_references(data)
+
+            print("References:")
+            for ref_type, urls in grouped_refs.items():
+                if urls:
+                    print(f"  {ref_type}: {len(urls)}")
+
+            processed += 1
+
+        except Exception as e:
+            print(f"Error processing {file.name}: {e}")
+
+    # -------------------
+    # Sluttstatistikk
+    # -------------------
+    print("\n" + "=" * 60)
+    print("SUMMARY")
+    print("=" * 60)
+    print(f"Total files: {total_files}")
+    print(f"Processed CVE: {processed}")
+    print(f"Skipped REJECTED: {skipped_rejected}")
+    print(f"Skipped invalid: {skipped_invalid}")
