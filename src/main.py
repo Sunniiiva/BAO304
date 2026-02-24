@@ -129,7 +129,6 @@ def ingest():
                 cve_id=cve_id,
                 repo_url=commit.get('repo_url'),
                 commit_sha=sha,
-                repo_url=commit.get("repo_url",""),
                 method="message_regex",
                 confidence=1.0 if commit.get("mentions_target_cve") else 0.5,
             )
@@ -205,7 +204,7 @@ def show(cve_id: str):
     
     for commit in commits[:5]:  # Vis maks 5
         typer.echo(f"  {commit['sha'][:8]}: {commit['message'][:50]}...")
-        patches = get_patches_for_commit(conn, commit['sha'])
+        patches = get_patches_for_commit(conn, commit["repo_url"], commit["sha"])
         typer.echo(f"    {len(patches)} filer endret")
 
     conn.close()
