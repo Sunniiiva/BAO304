@@ -1,5 +1,9 @@
 # Felles funksjoner (Bryter circular import)
-import re
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlparse
 from pydriller import Repository
 
 def extract_repo_and_hash(commit_url):
@@ -44,8 +48,6 @@ def extract_repo_and_hash(commit_url):
 def fetch_commit_data(repo_url, commit_hash):
     """Hent commit data med pydriller - robust versjon."""
     try:
-        from pydriller import Repository
-        
         repo = Repository(repo_url)
         commit = None
         
@@ -69,7 +71,7 @@ def fetch_commit_data(repo_url, commit_hash):
                 deleted = getattr(getattr(file, 'diff_stats', None), 'deletions', 0) if hasattr(file, 'diff_stats') else 0
                 
                 files_data.append({
-                    'filename': file.new_path or file.old_path or 'unknown',
+                    'file_path': file.new_path or file.old_path or 'unknown',
                     'change_type': str(file.change_type) if hasattr(file, 'change_type') else 'unknown',
                     'patch_text': diff_text,
                     'lines_added': added,
@@ -78,7 +80,7 @@ def fetch_commit_data(repo_url, commit_hash):
             except Exception as file_err:
                 # Fallback hvis fil-parsing feiler
                 files_data.append({
-                    'filename': file.new_path or file.old_path or 'unknown',
+                    'file_path': file.new_path or file.old_path or 'unknown',
                     'change_type': 'unknown',
                     'patch_text': '',
                     'lines_added': 0,
@@ -99,24 +101,56 @@ def fetch_commit_data(repo_url, commit_hash):
         return {'error': f'Feil ved henting av {repo_url}@{commit_hash}: {str(e)}'}
 
 
-
-    
-def fetch_commit_modified_files(repo_url, commit_hash):
+def _repo_dir_name(repo_url: str) -> str:
     """
-    Hjelpefunksjon for fetch_patch.py (Sunniva):
-    Hent kun modified_files fra commit - uten full commit data.
+    Lager et stabilt mappenavn fra repo_url, f.eks:
+    https://github.com/kpdecker/jsdiff  -> kpdecker_jsdiff
     """
-    commit_data = fetch_commit_data(repo_url, commit_hash)
-    
-    # Returner tom liste ved error
-    if 'error' in commit_data:
-        return []
-    
-    return commit_data.get('modified_files', [])
+    p = urlparse(repo_url)
+    parts = [x for x in p.path.strip("/").split("/") if x]
+    if len(parts) >= 2:
+        return f"{parts[-2]}_{parts[-1]}"
+    return parts[-1] if parts else "repo"
 
 
-if __name__ == "__main__":
-    test_url = "https://github.com/kpdecker/jsdiff/commit/15a1585230748c8ae6f8274c202e0c87309142f5"
-    result = extract_repo_and_hash(test_url)
-    print(f"Test URL: {test_url}")
-    print(f"Result: {result}")
+def fetch_commit_modified_files(repo_url: str, commit_sha: str) -> list[dict[str, Any]]:
+    if not repo_url:
+        raise ValueError("repo_url må settes")
+
+    clone_root = Path("temp_repos")
+    clone_root.mkdir(parents=True, exist_ok=True)
+
+    # Egen mappe per repo (hindrer kollisjon)
+    repo_dir = clone_root / _repo_dir_name(repo_url)
+    repo_dir.mkdir(parents=True, exist_ok=True)
+
+    repo = Repository(
+        repo_url,
+        clone_repo_to=str(repo_dir),  # <- her tvinger vi bort fra Windows Temp
+        single=commit_sha,
+    )
+
+    out: list[dict[str, Any]] = []
+    for c in repo.traverse_commits():
+        for mf in c.modified_files:
+            file_path = mf.new_path or mf.old_path or ""
+            patch_text = getattr(mf, "diff", None) or ""
+
+            before_code = getattr(mf, "source_code_before", None)
+            after_code = getattr(mf, "source_code", None)
+
+            if before_code is None:
+                before_code = getattr(mf, "content_before", None)
+            if after_code is None:
+                after_code = getattr(mf, "content", None)
+
+            out.append(
+                {
+                    "file_path": file_path,
+                    "patch_text": patch_text,
+                    "before_code": before_code or "",
+                    "after_code": after_code or "",
+                }
+            )
+
+    return out

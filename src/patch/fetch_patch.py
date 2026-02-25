@@ -8,7 +8,6 @@ from src.patch.language_detection import detect_language_from_path
 def fetch_patch_data(repo_url: str, commit_sha: str) -> list[dict]:
     """
     Fetch and parse patch data for all modified files in a commit.
-
     Returns a list of dicts. Keys are aligned with database naming:
     - repo_url
     - commit_sha
@@ -26,10 +25,13 @@ def fetch_patch_data(repo_url: str, commit_sha: str) -> list[dict]:
         patch_text = file.get("patch_text")
 
         parsed = parse_patch(patch_text)
+        
+        before_code = file.get("before_code") or parsed.get("before_code", "")
+        after_code = file.get("after_code") or parsed.get("after_code", "")
 
         patch_data.append(
             {
-                # Metadata (aligned with DB)
+                # Metadata
                 "repo_url": repo_url,
                 "commit_sha": commit_sha,
                 "file_path": file_path,
@@ -41,17 +43,11 @@ def fetch_patch_data(repo_url: str, commit_sha: str) -> list[dict]:
                 "changed_lines": parsed.get("changed_lines", 0),
                 "hunk_count": parsed.get("hunk_count", 0),
 
-                # Raw data (aligned with DB)
-                "diff_text": patch_text or "",
-                "before_code": parsed.get("before_code", ""),
-                "after_code": parsed.get("after_code", ""),
+                # Raw data 
+                "diff_text": patch_text,
+                "before_code": before_code,
+                "after_code": after_code,
             }
         )
 
     return patch_data
-
-
-# Output (keys):
-# repo_url, commit_sha, file_path, language,
-# added_lines, removed_lines, changed_lines, hunk_count,
-# diff_text, before_code, after_code
