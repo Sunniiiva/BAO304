@@ -16,7 +16,9 @@ CREATE TABLE IF NOT EXISTS cve (
   published   TEXT,
   severity    TEXT,
   cvss_score  REAL,
-  cve_title   TEXT
+  cve_title   TEXT,
+  cwe         TEXT,
+  state       TEXT
 );
 
 -- "commit" kan være et reservert SQL-ord, derfor bruker vi "commits"
@@ -97,20 +99,24 @@ def upsert_cve(
     severity: Optional[str] = None,
     cvss_score: Optional[float] = None,
     cve_title: Optional[str] = None,
+    cwe: Optional[str] = None,
+    state: Optional[str] = None,
 ) -> None:
     """Legger inn CVE, eller oppdaterer hvis den finnes fra før."""
     conn.execute(
         """
-        INSERT INTO cve(cve_id, description, published, severity, cvss_score, cve_title)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO cve(cve_id, description, published, severity, cvss_score, cve_title, cwe, state)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(cve_id) DO UPDATE SET
           description=COALESCE(excluded.description, cve.description),
           published=COALESCE(excluded.published, cve.published),
           severity=COALESCE(excluded.severity, cve.severity),
           cvss_score=COALESCE(excluded.cvss_score, cve.cvss_score),
-          cve_title=COALESCE(excluded.cve_title, cve.cve_title)
+          cve_title=COALESCE(excluded.cve_title, cve.cve_title),
+          cwe=COALESCE(excluded.cwe, cve.cwe),
+          state=COALESCE(excluded.state, cve.state)
         """,
-        (cve_id, description, published, severity, cvss_score, cve_title),
+        (cve_id, description, published, severity, cvss_score, cve_title, cwe, state),
     )
     conn.commit()
 
@@ -227,4 +233,3 @@ def get_patches_for_commit(conn: sqlite3.Connection, repo_url: str, commit_sha: 
         "SELECT * FROM patch WHERE repo_url = ? AND commit_sha = ?",
         (repo_url, commit_sha),
     ).fetchall()
-
