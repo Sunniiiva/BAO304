@@ -11,6 +11,9 @@ from .parse_cve import (
     extract_cve_info,
     extract_products,
     extract_grouped_references,
+    extract_state,
+    extract_cwe_ids,
+    extract_cvss_score,
 )
 
 __all__ = [
@@ -18,5 +21,8 @@ __all__ = [
     "extract_cve_info",
     "extract_products",
     "extract_grouped_references",
+    "extract_state",
+    "extract_cwe_ids",
+    "extract_cvss_score",
 ]
 
