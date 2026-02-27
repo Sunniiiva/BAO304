@@ -4,9 +4,7 @@ import sqlite3
 from pathlib import Path
 from typing import Optional
 
-# SQL-skjemaet for databasen (tabeller + indekser)
-# Viktig endring: commits har nå composite primary key (repo_url, sha)
-# og patch/cve_commit refererer til commits via (repo_url, commit_sha)
+
 SCHEMA_SQL = """
 PRAGMA foreign_keys = ON;
 
@@ -21,8 +19,6 @@ CREATE TABLE IF NOT EXISTS cve (
   state       TEXT
 );
 
--- "commit" kan være et reservert SQL-ord, derfor bruker vi "commits"
--- Ny PK: (repo_url, sha) slik at samme sha i ulike repoer ikke kolliderer
 CREATE TABLE IF NOT EXISTS commits (
   repo_url      TEXT NOT NULL,
   sha           TEXT NOT NULL,
@@ -34,8 +30,6 @@ CREATE TABLE IF NOT EXISTS commits (
   PRIMARY KEY (repo_url, sha)
 );
 
--- En rad per fil som ble endret i en commit
--- Må ha både repo_url og commit_sha for å kunne referere til commits PK
 CREATE TABLE IF NOT EXISTS patch (
   patch_id      INTEGER PRIMARY KEY AUTOINCREMENT,
   repo_url      TEXT NOT NULL,
@@ -46,13 +40,12 @@ CREATE TABLE IF NOT EXISTS patch (
   removed_lines INTEGER,
   hunk_count    INTEGER,
   diff_text     TEXT,
+  -- before_code/after_code blir migrert inn i eksisterende DB-er via migrate_db()
   FOREIGN KEY (repo_url, commit_sha)
     REFERENCES commits(repo_url, sha)
     ON DELETE CASCADE
 );
 
--- Koblingstabell: mange CVE-er kan kobles til mange commits
--- Må ha både repo_url og commit_sha for å peke på riktig commit
 CREATE TABLE IF NOT EXISTS cve_commit (
   cve_id     TEXT NOT NULL,
   repo_url   TEXT NOT NULL,
@@ -66,7 +59,6 @@ CREATE TABLE IF NOT EXISTS cve_commit (
     ON DELETE CASCADE
 );
 
--- Indekser for raskere oppslag når databasen blir større
 CREATE INDEX IF NOT EXISTS idx_patch_repo_sha ON patch(repo_url, commit_sha);
 CREATE INDEX IF NOT EXISTS idx_cve_commit_repo_sha ON cve_commit(repo_url, commit_sha);
 CREATE INDEX IF NOT EXISTS idx_cve_commit_cve_id ON cve_commit(cve_id);
@@ -74,20 +66,32 @@ CREATE INDEX IF NOT EXISTS idx_cve_commit_cve_id ON cve_commit(cve_id);
 
 
 def connect(db_path: str | Path) -> sqlite3.Connection:
-    """Åpner/laget sqlite-db på ønsket path og skrur på foreign keys."""
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
     conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row  # gjør at vi kan lese rader som dict-lignende
+    conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON;")
     return conn
 
 
+def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, coldef: str) -> None:
+    cols = [row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coldef}")
+        conn.commit()
+
+
+def migrate_db(conn: sqlite3.Connection) -> None:
+    # Legg til nye kolonner uten å ødelegge eksisterende DB
+    _add_column_if_missing(conn, "patch", "before_code", "TEXT")
+    _add_column_if_missing(conn, "patch", "after_code", "TEXT")
+
+
 def init_db(conn: sqlite3.Connection) -> None:
-    """Oppretter tabeller/indekser hvis de ikke finnes fra før."""
     conn.executescript(SCHEMA_SQL)
     conn.commit()
+    migrate_db(conn)
 
 
 def upsert_cve(
@@ -102,7 +106,6 @@ def upsert_cve(
     cwe: Optional[str] = None,
     state: Optional[str] = None,
 ) -> None:
-    """Legger inn CVE, eller oppdaterer hvis den finnes fra før."""
     conn.execute(
         """
         INSERT INTO cve(cve_id, description, published, severity, cvss_score, cve_title, cwe, state)
@@ -132,7 +135,6 @@ def upsert_commit(
     author: Optional[str] = None,
     authored_date: Optional[str] = None,
 ) -> None:
-    """Legger inn commit, eller oppdaterer hvis den finnes fra før (unikt per repo_url+sha)."""
     if not repo_url:
         raise ValueError("repo_url must be provided for commits (composite primary key).")
 
@@ -162,12 +164,11 @@ def insert_patch(
     added_lines: Optional[int] = None,
     removed_lines: Optional[int] = None,
     hunk_count: Optional[int] = None,
-    changed_lines: Optional[int] = None,
+    changed_lines: Optional[int] = None,  # ikke lagret i schemaet per nå (beholdt for kompat)
     diff_text: Optional[str] = None,
     before_code: Optional[str] = None,
     after_code: Optional[str] = None,
 ) -> int:
-    """Legger inn en patch-rad (typisk per fil i en commit)."""
     if not repo_url:
         raise ValueError("repo_url must be provided for patch rows (FK to commits).")
 
@@ -175,11 +176,16 @@ def insert_patch(
         """
         INSERT INTO patch(
           repo_url, commit_sha, file_path, language,
-          added_lines, removed_lines, hunk_count, diff_text
+          added_lines, removed_lines, hunk_count, diff_text,
+          before_code, after_code
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (repo_url, commit_sha, file_path, language, added_lines, removed_lines, hunk_count, diff_text),
+        (
+            repo_url, commit_sha, file_path, language,
+            added_lines, removed_lines, hunk_count, diff_text,
+            before_code, after_code
+        ),
     )
     conn.commit()
     return int(cur.lastrowid)
@@ -194,10 +200,6 @@ def link_cve_commit(
     method: Optional[str] = None,
     confidence: Optional[float] = None,
 ) -> None:
-    """Lager/oppdaterer kobling mellom en CVE og en commit."""
-    if not repo_url:
-        raise ValueError("repo_url must be provided for cve_commit links (FK to commits).")
-
     conn.execute(
         """
         INSERT INTO cve_commit(cve_id, repo_url, commit_sha, method, confidence)
@@ -212,7 +214,6 @@ def link_cve_commit(
 
 
 def get_commits_for_cve(conn: sqlite3.Connection, cve_id: str):
-    """Henter commits koblet til en CVE (nyttig for debugging/analyse)."""
     return conn.execute(
         """
         SELECT c.repo_url, c.sha, c.url, c.message, cc.method, cc.confidence
@@ -228,7 +229,6 @@ def get_commits_for_cve(conn: sqlite3.Connection, cve_id: str):
 
 
 def get_patches_for_commit(conn: sqlite3.Connection, repo_url: str, commit_sha: str):
-    """Henter patch-rader (filendringer) for en commit."""
     return conn.execute(
         "SELECT * FROM patch WHERE repo_url = ? AND commit_sha = ?",
         (repo_url, commit_sha),
