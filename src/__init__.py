@@ -1,1 +1,0 @@
-# gjør mappen til en python modul

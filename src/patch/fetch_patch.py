@@ -26,8 +26,8 @@ def fetch_patch_data(repo_url: str, commit_sha: str) -> list[dict]:
 
         parsed = parse_patch(patch_text)
         
-        before_code = file.get("before_code") or parsed.get("before_code", "")
-        after_code = file.get("after_code") or parsed.get("after_code", "")
+        before_code = parsed.get("before_code", "")
+        after_code = parsed.get("after_code", "")
 
         patch_data.append(
             {

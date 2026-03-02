@@ -146,32 +146,69 @@ def extract_grouped_references(cve_data):
     )
 
     grouped = {
+        "repo": [],
         "commit": [],
         "pull": [],
+        "issue": [],
         "security-advisories": [],
         "other": []
     }
 
-    for ref in refs:
-        url = ref.get("url")
+    seen = {k: set() for k in grouped.keys()}
 
+    # GitHub paths that are NOT git repos
+    NON_REPO_TOPLEVEL = {"advisories", "security", "login", "settings", "marketplace"}
+
+    for ref in refs:
+        url = ref.get("url") or ref.get("name")
         if not url:
             continue
 
         parsed = urlparse(url)
-        path = parsed.path.lower()
+        path = parsed.path or ""
+        path_lower = path.lower()
 
-        if "/commit/" in path:
-            grouped["commit"].append(url)
+        # --- classify first ---
+        if "github.com/advisories/" in url.lower() or "/security/advisories/" in path_lower:
+            if url not in seen["security-advisories"]:
+                grouped["security-advisories"].append(url)
+                seen["security-advisories"].add(url)
+            # IMPORTANT: do NOT treat this as a repo
+            continue
 
-        elif "/pull/" in path:
-            grouped["pull"].append(url)
+        if "/commit/" in path_lower:
+            if url not in seen["commit"]:
+                grouped["commit"].append(url)
+                seen["commit"].add(url)
 
-        elif "/security/advisories/" in path:
-            grouped["security-advisories"].append(url)
+        elif "/pull/" in path_lower:
+            if url not in seen["pull"]:
+                grouped["pull"].append(url)
+                seen["pull"].add(url)
+
+        elif "/issues/" in path_lower:
+            if url not in seen["issue"]:
+                grouped["issue"].append(url)
+                seen["issue"].add(url)
 
         else:
-            grouped["other"].append(url)
+            if url not in seen["other"]:
+                grouped["other"].append(url)
+                seen["other"].add(url)
+
+        # --- repo extraction (ONLY owner/repo) ---
+        if parsed.netloc.lower().endswith("github.com"):
+            parts = [p for p in path.strip("/").split("/") if p]
+            # Need at least owner/repo
+            if len(parts) >= 2:
+                owner, repo = parts[0], parts[1]
+                # Skip non-repo top-level paths like /advisories/...
+                if owner.lower() in NON_REPO_TOPLEVEL:
+                    continue
+                base_repo = f"https://github.com/{owner}/{repo}"
+                if base_repo not in seen["repo"]:
+                    grouped["repo"].append(base_repo)
+                    seen["repo"].add(base_repo)
 
     return grouped
 
