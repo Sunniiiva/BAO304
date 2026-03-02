@@ -1,31 +1,33 @@
-from __future__ import annotations
+from __future__ import annotations  # Gjør at type hints evalueres som strenger (unngår sirkulære referanser)
 
 import sqlite3
 from pathlib import Path
-from typing import Optional
+from typing import Optional  # Brukes for å markere at parametere kan være None
 
 
 SCHEMA_SQL = """
-PRAGMA foreign_keys = ON;
+PRAGMA foreign_keys = ON;  -- Sørger for at SQLite håndhever foreign key-regler
 
 CREATE TABLE IF NOT EXISTS cve (
-  cve_id      TEXT PRIMARY KEY,
-  description TEXT,
-  published   TEXT,
-  severity    TEXT,
-  cvss_score  REAL,
-  cve_title   TEXT
+  cve_id      TEXT PRIMARY KEY,  -- Unik identifikator for sårbarheten
+  description TEXT,              -- Beskrivelse av sårbarheten
+  published   TEXT,              -- Publiseringsdato
+  severity    TEXT,              -- Alvorlighetsgrad (f.eks. HIGH, MEDIUM)
+  cvss_score  REAL,              -- Numerisk CVSS-score
+  cve_title   TEXT,              -- Kort tittel på sårbarheten
+  cwe         TEXT,              -- Klassifisering av sårbarhetstype
+  state       TEXT               -- Status for CVE (f.eks. PUBLISHED)
 );
 
 CREATE TABLE IF NOT EXISTS commits (
-  repo_url      TEXT NOT NULL,
-  sha           TEXT NOT NULL,
-  url           TEXT,
-  message       TEXT,
-  commit_date   TEXT,
-  author        TEXT,
-  authored_date TEXT,
-  PRIMARY KEY (repo_url, sha)
+  repo_url      TEXT NOT NULL,   -- Hvilket repository commiten tilhører
+  sha           TEXT NOT NULL,   -- Commit-hash
+  url           TEXT,            -- URL til commit på GitHub
+  message       TEXT,            -- Commit-melding
+  commit_date   TEXT,            -- Dato commit ble gjort
+  author        TEXT,            -- Forfatter av commit
+  authored_date TEXT,            -- Når commit ble skrevet
+  PRIMARY KEY (repo_url, sha)    -- Sikrer unikhet per repo
 );
 
 CREATE TABLE IF NOT EXISTS patch (
@@ -38,18 +40,17 @@ CREATE TABLE IF NOT EXISTS patch (
   removed_lines INTEGER,
   hunk_count    INTEGER,
   diff_text     TEXT,
-  -- before_code/after_code blir migrert inn i eksisterende DB-er via migrate_db()
   FOREIGN KEY (repo_url, commit_sha)
     REFERENCES commits(repo_url, sha)
-    ON DELETE CASCADE
+    ON DELETE CASCADE  -- Hvis commit slettes, slettes tilhørende patcher
 );
 
 CREATE TABLE IF NOT EXISTS cve_commit (
-  cve_id     TEXT NOT NULL,
-  repo_url   TEXT NOT NULL,
-  commit_sha TEXT NOT NULL,
-  method     TEXT,
-  confidence REAL,
+  cve_id     TEXT NOT NULL,      -- Hvilken CVE koblingen gjelder
+  repo_url   TEXT NOT NULL,      -- Repository
+  commit_sha TEXT NOT NULL,      -- Commit som potensielt fikser CVE
+  method     TEXT,               -- Hvordan koblingen ble funnet (regex, heuristikk osv.)
+  confidence REAL,               -- Hvor sikker vi er på koblingen (0–1)
   PRIMARY KEY (cve_id, repo_url, commit_sha),
   FOREIGN KEY (cve_id) REFERENCES cve(cve_id) ON DELETE CASCADE,
   FOREIGN KEY (repo_url, commit_sha)
@@ -57,6 +58,7 @@ CREATE TABLE IF NOT EXISTS cve_commit (
     ON DELETE CASCADE
 );
 
+-- Indekser for raskere oppslag når databasen blir større
 CREATE INDEX IF NOT EXISTS idx_patch_repo_sha ON patch(repo_url, commit_sha);
 CREATE INDEX IF NOT EXISTS idx_cve_commit_repo_sha ON cve_commit(repo_url, commit_sha);
 CREATE INDEX IF NOT EXISTS idx_cve_commit_cve_id ON cve_commit(cve_id);
@@ -64,11 +66,13 @@ CREATE INDEX IF NOT EXISTS idx_cve_commit_cve_id ON cve_commit(cve_id);
 
 
 def connect(db_path: str | Path) -> sqlite3.Connection:
+    """Åpner/laget sqlite-db på ønsket path og skrur på foreign keys."""
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Oppretter forbindelse til SQLite-databasen
     conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
+    conn.row_factory = sqlite3.Row  # gjør at vi kan lese rader som dict-lignende
     conn.execute("PRAGMA foreign_keys = ON;")
     return conn
 
@@ -87,6 +91,7 @@ def migrate_db(conn: sqlite3.Connection) -> None:
 
 
 def init_db(conn: sqlite3.Connection) -> None:
+    """Oppretter tabeller/indekser hvis de ikke finnes fra før."""
     conn.executescript(SCHEMA_SQL)
     conn.commit()
     migrate_db(conn)
@@ -101,19 +106,24 @@ def upsert_cve(
     severity: Optional[str] = None,
     cvss_score: Optional[float] = None,
     cve_title: Optional[str] = None,
+    cwe: Optional[str] = None,
+    state: Optional[str] = None,
 ) -> None:
+    """Legger inn CVE, eller oppdaterer hvis den finnes fra før."""
     conn.execute(
         """
-        INSERT INTO cve(cve_id, description, published, severity, cvss_score, cve_title)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO cve(cve_id, description, published, severity, cvss_score, cve_title, cwe, state)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(cve_id) DO UPDATE SET
           description=COALESCE(excluded.description, cve.description),
           published=COALESCE(excluded.published, cve.published),
           severity=COALESCE(excluded.severity, cve.severity),
           cvss_score=COALESCE(excluded.cvss_score, cve.cvss_score),
-          cve_title=COALESCE(excluded.cve_title, cve.cve_title)
+          cve_title=COALESCE(excluded.cve_title, cve.cve_title),
+          cwe=COALESCE(excluded.cwe, cve.cwe),
+          state=COALESCE(excluded.state, cve.state)
         """,
-        (cve_id, description, published, severity, cvss_score, cve_title),
+        (cve_id, description, published, severity, cvss_score, cve_title, cwe, state),
     )
     conn.commit()
 
@@ -129,9 +139,11 @@ def upsert_commit(
     author: Optional[str] = None,
     authored_date: Optional[str] = None,
 ) -> None:
+    """Legger inn commit, eller oppdaterer hvis den finnes fra før (unikt per repo_url+sha)."""
     if not repo_url:
         raise ValueError("repo_url must be provided for commits (composite primary key).")
 
+    # Upsert basert på composite key (repo_url, sha)
     conn.execute(
         """
         INSERT INTO commits(repo_url, sha, url, message, commit_date, author, authored_date)
@@ -163,9 +175,11 @@ def insert_patch(
     before_code: Optional[str] = None,
     after_code: Optional[str] = None,
 ) -> int:
+    """Legger inn en patch-rad (typisk per fil i en commit)."""
     if not repo_url:
         raise ValueError("repo_url must be provided for patch rows (FK to commits).")
 
+    # Setter inn én rad per filendring i patch-tabellen
     cur = conn.execute(
         """
         INSERT INTO patch(
@@ -182,7 +196,7 @@ def insert_patch(
         ),
     )
     conn.commit()
-    return int(cur.lastrowid)
+    return int(cur.lastrowid)  # Returnerer ID til nyopprettet patch
 
 
 def link_cve_commit(
@@ -194,6 +208,10 @@ def link_cve_commit(
     method: Optional[str] = None,
     confidence: Optional[float] = None,
 ) -> None:
+    """Lager/oppdaterer kobling mellom en CVE og en commit."""
+    if not repo_url:
+        raise ValueError("repo_url must be provided for cve_commit links (FK to commits).")
+
     conn.execute(
         """
         INSERT INTO cve_commit(cve_id, repo_url, commit_sha, method, confidence)
@@ -208,6 +226,7 @@ def link_cve_commit(
 
 
 def get_commits_for_cve(conn: sqlite3.Connection, cve_id: str):
+    """Henter commits koblet til en CVE (nyttig for debugging/analyse)."""
     return conn.execute(
         """
         SELECT c.repo_url, c.sha, c.url, c.message, cc.method, cc.confidence
@@ -223,6 +242,7 @@ def get_commits_for_cve(conn: sqlite3.Connection, cve_id: str):
 
 
 def get_patches_for_commit(conn: sqlite3.Connection, repo_url: str, commit_sha: str):
+    """Henter patch-rader (filendringer) for en commit."""
     return conn.execute(
         "SELECT * FROM patch WHERE repo_url = ? AND commit_sha = ?",
         (repo_url, commit_sha),
