@@ -26,6 +26,8 @@ from src.db import (
     get_patches_for_commit,
 )
 
+from src.repo.utils import cleanup_all_temp_repos
+
 app = typer.Typer()
 DB_PATH = Path("data/processed/cve_commits.db")
 
@@ -157,6 +159,9 @@ def ingest():
                 typer.echo(f"      Patch-henting feilet: {e}")
 
     conn.close()
+    
+    cleanup_all_temp_repos()
+     
     typer.echo("\nIngest fullført – data lagret i databasen!")
 
 
