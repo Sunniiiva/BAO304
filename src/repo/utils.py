@@ -1,6 +1,9 @@
-# Felles funksjoner (Bryter circular import)
+# Felles funksjoner (hindrer circular imports mellom moduler)
 from __future__ import annotations
 
+import os
+import shutil
+import stat
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -118,8 +121,10 @@ def fetch_commit_data(repo_url: str, commit_hash: str) -> dict[str, Any]:
 
 def _repo_dir_name(repo_url: str) -> str:
     """
-    Lager et stabilt mappenavn fra repo_url, f.eks:
-    https://github.com/kpdecker/jsdiff  -> kpdecker_jsdiff
+    Lager et stabilt og lesbart mappenavn basert på repo_url.
+
+    Eksempel:
+      https://github.com/kpdecker/jsdiff -> kpdecker_jsdiff
     """
     p = urlparse(repo_url)
     parts = [x for x in p.path.strip("/").split("/") if x]
@@ -144,7 +149,6 @@ def fetch_commit_modified_files(repo_url: str, commit_sha: str) -> list[dict[str
     clone_root = Path("temp_repos")
     clone_root.mkdir(parents=True, exist_ok=True)
 
-    # Egen mappe per repo (hindrer kollisjon)
     repo_dir = clone_root / _repo_dir_name(repo_url)
     repo_dir.mkdir(parents=True, exist_ok=True)
 
