@@ -18,6 +18,8 @@ from src.cve import (
 )
 from src.repo import process_cve_references
 from src.patch import fetch_patch_data
+from src.patch.parse_patch import parse_patch
+
 from src.db import (
     connect,
     init_db,
@@ -34,7 +36,9 @@ from src.repo.utils import cleanup_all_temp_repos
 app = typer.Typer()
 DB_PATH = Path("data/processed/cve_commits.db")
 
-
+# ----------------------------------
+# Hovedkommando som viser hjelpefuksjon
+# ----------------------------------
 @app.callback(invoke_without_command=True)
 def main(ctx: typer.Context):
     """CVE Commit Analysis Pipeline"""
@@ -42,13 +46,17 @@ def main(ctx: typer.Context):
         typer.echo("Ingen kommando er gitt. bruk --help for mer informasjon.")
         raise typer.Exit(code=0)
 
-
+# ----------------------------------
+# Test kommando
+# ----------------------------------
 @app.command()
 def hello():
     """Sier hello (testkommando)"""
     typer.echo("Hello, CVE Commit Analysis Pipeline!")
 
-
+# ----------------------------------
+# Ingest kommando: Full pipeline for å lese CVE-filer, finne commits og patches, og lagre i DB.
+# ----------------------------------
 @app.command()
 def ingest():
     """
@@ -182,7 +190,9 @@ def ingest():
      
     typer.echo("\nIngest fullført – data lagret i databasen!")
 
-
+# ----------------------------------
+# Kommando for å vise statistikk og detaljer fra databasen
+# ----------------------------------
 @app.command()
 def stats():
     """
@@ -204,7 +214,9 @@ Database-statistikk:
 
     conn.close()
 
-
+# ----------------------------------
+# Kommando for å vise detaljer for en spesifikk CVE-ID
+# ----------------------------------
 @app.command()
 def show(cve_id: str):
     """
