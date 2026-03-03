@@ -24,13 +24,3 @@ __all__ = [
     "fetch_commit_modified_files", 
     "process_cve_references"
 ]
-
-from .crawl_repo import crawl_repo_for_cve
-
-__all__ = [
-    "extract_repo_and_hash",
-    "fetch_commit_data",
-    "fetch_commit_modified_files",
-    "process_cve_references",
-    "crawl_repo_for_cve",
-]

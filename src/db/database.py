@@ -247,5 +247,3 @@ def get_patches_for_commit(conn: sqlite3.Connection, repo_url: str, commit_sha: 
         "SELECT * FROM patch WHERE repo_url = ? AND commit_sha = ?",
         (repo_url, commit_sha),
     ).fetchall()
-
-    
