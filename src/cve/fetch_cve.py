@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-#Funksjon som henter ut CVE data fra en JSON fil 
+
 def load_cve_from_file(filepath):
 
     path = Path(filepath)

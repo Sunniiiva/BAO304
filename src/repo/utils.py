@@ -11,59 +11,68 @@ from urllib.parse import urlparse
 from pydriller import Repository
 
 
-# Felles funksjoner for parsing av repo-URL-er og commit-data
-def extract_repo_url_from_github(any_github_url: str) -> str | None:
+def extract_repo_and_hash(commit_url: str):
     """
-    Extract base repo URL from any GitHub URL:
-    https://github.com/owner/repo/anything -> https://github.com/owner/repo
+    Ekstraherer repo-URL og commit-hash fra en GitHub-commit-URL.
+
+    Støtter:
+    - Full URL:  https://github.com/owner/repo/commit/<hash>
+    - Markdown:  [tekst](https://github.com/owner/repo/commit/<hash>)
+    - Returnerer dict med 'repo_url' og 'commit_hash', eller None hvis parsing feiler.
     """
-    if not any_github_url:
+    if not commit_url or "github.com" not in commit_url:
         return None
 
-    # Handle markdown [text](url)
-    if "(" in any_github_url and ")" in any_github_url:
-        any_github_url = any_github_url.split("(", 1)[-1].split(")", 1)[0]
-
-    parsed = urlparse(any_github_url)
-    if not parsed.netloc or "github.com" not in parsed.netloc.lower():
-        return None
-
-    parts = [p for p in (parsed.path or "").strip("/").split("/") if p]
-    if len(parts) < 2:
-        return None
-
-    owner, repo = parts[0], parts[1]
-    return f"https://github.com/{owner}/{repo}"
-
-
-def extract_repo_and_hash(commit_url: str) -> dict[str, str] | None:
-    """Ekstraher repo URL og commit hash fra GitHub commit URL."""
-    if not commit_url:
-        return None
-
-    # Håndterer markdown [text](url)
+    # Hvis URL-en er inne i markdown-lenke [tekst](url), plukk ut url-delen
     if "(" in commit_url and ")" in commit_url:
-        commit_url = commit_url.split("(", 1)[-1].split(")", 1)[0]
+        commit_url = commit_url.split("(")[-1].split(")")[0]
 
-    parsed = urlparse(commit_url)
-    clean_path = (parsed.path or "").strip("/")
-    parts = [p for p in clean_path.split("/") if p]
+    # Fjern protokoll, query-parametre og fragments
+    clean_url = (
+        commit_url.replace("https://", "")
+        .replace("http://", "")
+        .split("?")[0]
+        .split("#")[0]
+    )
 
-    # /owner/repo/commit/<hash>
-    if parsed.netloc.lower().endswith("github.com"):
-        if len(parts) >= 4 and parts[2].lower() == "commit":
-            owner, repo, commit_hash = parts[0], parts[1], parts[3]
-            return {"repo_url": f"https://github.com/{owner}/{repo}", "commit_hash": commit_hash}
+    # Del opp på '/' og fjern tomme deler
+    parts = [p for p in clean_url.strip("/").split("/") if p]
+
+    # Format: github.com/<owner>/<repo>/commit/<hash>
+    if len(parts) >= 5 and parts[0] == "github.com" and parts[3] == "commit":
+        owner = parts[1]
+        repo = parts[2]
+        commit_hash = parts[4]
+        return {
+            "repo_url": f"https://github.com/{owner}/{repo}",
+            "commit_hash": commit_hash,
+        }
+
+    # Format: <owner>/<repo>/commit/<hash>
+    if len(parts) >= 4 and parts[2] == "commit":
+        owner = parts[0]
+        repo = parts[1]
+        commit_hash = parts[3]
+        return {
+            "repo_url": f"https://github.com/{owner}/{repo}",
+            "commit_hash": commit_hash,
+        }
 
     return None
 
 
-def fetch_commit_data(repo_url: str, commit_hash: str) -> dict[str, Any]:
-    """Hent commit data med pydriller - robust versjon."""
+def fetch_commit_data(repo_url: str, commit_hash: str):
+    """
+    Henter metadata og filendringer for en gitt commit ved hjelp av PyDriller.
+
+    Returnerer dict med commit-info og en liste over endrede filer.
+    Ved feil returneres dict med 'error'.
+    """
     try:
         repo = Repository(repo_url)
         commit = None
 
+        # Finn commiten vi er ute etter
         for c in repo.traverse_commits():
             if c.hash == commit_hash:
                 commit = c
@@ -72,23 +81,24 @@ def fetch_commit_data(repo_url: str, commit_hash: str) -> dict[str, Any]:
         if not commit:
             return {"error": f"Commit {commit_hash} ikke funnet i {repo_url}"}
 
-        files_data: list[dict[str, Any]] = []
+        files_data = []
         for file in commit.modified_files:
             try:
                 diff_text = str(file.diff) if getattr(file, "diff", None) else ""
 
-                # Stats (sikker tilgang)
-                added = 0
-                deleted = 0
-                ds = getattr(file, "diff_stats", None)
-                if ds is not None:
-                    added = getattr(ds, "additions", 0) or 0
-                    deleted = getattr(ds, "deletions", 0) or 0
+                if getattr(file, "diff_stats", None):
+                    added = getattr(file.diff_stats, "additions", 0)
+                    deleted = getattr(file.diff_stats, "deletions", 0)
+                else:
+                    added = 0
+                    deleted = 0
 
                 files_data.append(
                     {
                         "file_path": file.new_path or file.old_path or "unknown",
-                        "change_type": str(file.change_type) if hasattr(file, "change_type") else "unknown",
+                        "change_type": str(file.change_type)
+                        if hasattr(file, "change_type")
+                        else "unknown",
                         "patch_text": diff_text,
                         "lines_added": added,
                         "lines_deleted": deleted,
@@ -135,16 +145,20 @@ def _repo_dir_name(repo_url: str) -> str:
 
 def fetch_commit_modified_files(repo_url: str, commit_sha: str) -> list[dict[str, Any]]:
     """
-    Hent alle modified files for en commit, men returner KUN patch/diff + filsti.
+    Henter detaljer om alle filer som er endret i én spesifikk commit.
 
-    Viktig:
-    - Returnerer IKKE hele filinnholdet (before/after), fordi det gir enorm output/DB-størrelse.
-    - before/after (endrede linjer) skal bygges fra parse_patch(patch_text).
+    Repoet klones til en lokal temp_repos/-mappe, i en egen undermappe per repo.
+
+    Returnerer liste av:
+      {
+        "file_path": ...,
+        "patch_text": ...,
+        "before_code": ...,
+        "after_code": ...
+      }
     """
     if not repo_url:
         raise ValueError("repo_url må settes")
-    if not commit_sha:
-        raise ValueError("commit_sha må settes")
 
     clone_root = Path("temp_repos")
     clone_root.mkdir(parents=True, exist_ok=True)
@@ -154,8 +168,8 @@ def fetch_commit_modified_files(repo_url: str, commit_sha: str) -> list[dict[str
 
     repo = Repository(
         repo_url,
-        clone_repo_to=str(repo_dir),
-        single=commit_sha,
+        clone_repo_to=str(repo_dir),  # Klon til vår mappe (ikke OS-temp)
+        single=commit_sha,            # Begrenser til kun denne commiten
     )
 
     out: list[dict[str, Any]] = []
@@ -163,24 +177,48 @@ def fetch_commit_modified_files(repo_url: str, commit_sha: str) -> list[dict[str
         for mf in c.modified_files:
             file_path = mf.new_path or mf.old_path or ""
             patch_text = getattr(mf, "diff", None) or ""
-            patch_text = str(patch_text)  # sørg for ren tekst
 
-            # Stats (valgfritt, men ofte nyttig)
-            added = 0
-            deleted = 0
-            ds = getattr(mf, "diff_stats", None)
-            if ds is not None:
-                added = getattr(ds, "additions", 0) or 0
-                deleted = getattr(ds, "deletions", 0) or 0
+            before_code = getattr(mf, "source_code_before", None)
+            after_code = getattr(mf, "source_code", None)
+
+            if before_code is None:
+                before_code = getattr(mf, "content_before", None)
+            if after_code is None:
+                after_code = getattr(mf, "content", None)
 
             out.append(
                 {
                     "file_path": file_path,
                     "patch_text": patch_text,
-                    "lines_added": added,
-                    "lines_deleted": deleted,
-                    "change_type": str(getattr(mf, "change_type", "unknown")),
+                    "before_code": before_code or "",
+                    "after_code": after_code or "",
                 }
             )
 
     return out
+
+
+def _handle_remove_readonly(func, path, exc_info):
+    """
+    Håndterer PermissionError ved sletting på Windows.
+
+    shutil.rmtree kaller denne hvis den møter en fil/mappe den ikke får slettet.
+    Vi gjør path skrivbar (fjerner read-only) og prøver igjen.
+    """
+    try:
+        os.chmod(path, stat.S_IWRITE)
+    except Exception:
+        pass
+    func(path)
+
+
+def cleanup_all_temp_repos():
+    """
+    Sletter hele temp_repos/-mappen med alle undermapper.
+
+    Bruker onerror-callback for å takle Windows-problemer med read-only .git-filer.
+    """
+    clone_root = Path("temp_repos")
+    if clone_root.exists():
+        shutil.rmtree(clone_root, onerror=_handle_remove_readonly)
+        print("Alle temp_repos slettet!")
