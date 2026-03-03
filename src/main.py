@@ -12,6 +12,9 @@ from src.cve import (
     extract_cve_info,
     extract_products,
     extract_grouped_references,
+    extract_state,
+    extract_cwe_ids,
+    extract_cvss_score,
 )
 from src.repo import process_cve_references
 from src.patch import fetch_patch_data
@@ -53,6 +56,7 @@ def ingest():
     """
     typer.echo("Starter ingest-pipeline...")
 
+
     # Koble til / opprett database
     conn = connect(DB_PATH)
     init_db(conn)
@@ -66,13 +70,26 @@ def ingest():
 
     typer.echo(f"Fant {len(cve_files)} CVE-fil(er)")
 
+    
     for cve_file in cve_files:
+    
+
         typer.echo(f"\nProsesserer {Path(cve_file).name}")
         cve_data = load_cve_from_file(cve_file)
 
         # Hent basisinfo om CVE
         cve_id, title = extract_cve_info(cve_data)
         products = extract_products(cve_data)
+        cvss_score = extract_cvss_score(cve_data)
+        score = cvss_score.get("score")
+        severity = cvss_score.get("severity")
+        cwe_list = extract_cwe_ids(cve_data)
+        state = extract_state(cve_data)
+
+        # Sjekker alle filer for cve state, hopper over om REJECTED
+        if state == "REJECTED":
+            typer.echo(f"hopper over {cve_id}, state ble rejected")
+            continue
 
         # CVE JSON-struktur fra CVE-skjemaet.
         description = (
@@ -85,17 +102,23 @@ def ingest():
         typer.echo(f"  CVE: {cve_id}")
         typer.echo(f"  Tittel: {title}")
         typer.echo(f"  Produkter: {len(products)} stk")
+        typer.echo(f"  Cvss_score: {score}")
+        typer.echo(f"  alvorlighetsgrad: {severity}")
 
-        # Lagre CVE i databasen
+        # Lagre CVE i databasen - må skaleres når database blir oppdatert
         upsert_cve(
             conn,
             cve_id=cve_id,
             description=description,
             published=published,
-            severity=None,
-            cvss_score=None,
+            severity=severity,
+            cvss_score=score,
         )
         typer.echo("  CVE lagret")
+
+        # Her må kode for å lagre informasjon om cwe legges til
+        #upsert_cwe()
+        
 
         # Hent commits for denne CVE-en
         results = process_cve_references(cve_data)
@@ -129,7 +152,6 @@ def ingest():
             link_cve_commit(
                 conn,
                 cve_id=cve_id,
-                repo_url=commit.get('repo_url'),
                 commit_sha=sha,
                 method="message_regex",
                 confidence=1.0 if commit.get("mentions_target_cve") else 0.5,
@@ -139,21 +161,17 @@ def ingest():
 
             # Hent patch-data for denne committen
             try:
-                patch_list = fetch_patch_data(commit.get("repo_url", ""), sha)
+                patch_list = fetch_patch_data(commit.get('repo_url', ''), sha)
                 for patch in patch_list:
-                   insert_patch(
+                    insert_patch(
                         conn,
-                        repo_url=patch["repo_url"],
-                        commit_sha=patch["commit_sha"],
+                        commit_sha=sha,
                         file_path=patch["file_path"],
                         language=patch["language"],
                         added_lines=patch["added_lines"],
                         removed_lines=patch["removed_lines"],
-                        hunk_count=patch.get("hunk_count"),
-                        diff_text=patch["diff_text"],
-                        before_code=patch.get("before_code"),
-                        after_code=patch.get("after_code"),
-    )
+                        diff_text=patch["patch_text"],
+                    )
                 typer.echo(f"      {len(patch_list)} patch(er) lagret")
             except Exception as e:
                 typer.echo(f"      Patch-henting feilet: {e}")
@@ -209,7 +227,7 @@ def show(cve_id: str):
     
     for commit in commits[:5]:  # Vis maks 5
         typer.echo(f"  {commit['sha'][:8]}: {commit['message'][:50]}...")
-        patches = get_patches_for_commit(conn, commit["repo_url"], commit["sha"])
+        patches = get_patches_for_commit(conn, commit['sha'])
         typer.echo(f"    {len(patches)} filer endret")
 
     conn.close()
