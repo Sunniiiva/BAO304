@@ -88,16 +88,18 @@ def ingest():
         # Hent basisinfo om CVE
         cve_id, title = extract_cve_info(cve_data)
         products = extract_products(cve_data)
-        cvss_score = extract_cvss_score(cve_data)
-        score = cvss_score.get("score")
-        severity = cvss_score.get("severity")
-        cwe_list = extract_cwe_ids(cve_data)
+       
+       #Hopper over CVE-er med rejected states 
         state = extract_state(cve_data)
-
-        # Sjekker alle filer for cve state, hopper over om REJECTED
         if state == "REJECTED":
             typer.echo(f"hopper over {cve_id}, state ble rejected")
             continue
+
+        # Ekstraher CVSS-score og alvorlighetsgrad, samt CWE-IDer
+        cvss_score = extract_cvss_score(cve_data) or {}
+        score = cvss_score.get("score")
+        severity = cvss_score.get("severity")
+        cwe_list = extract_cwe_ids(cve_data)
 
         # CVE JSON-struktur fra CVE-skjemaet.
         description = (
@@ -160,6 +162,7 @@ def ingest():
             link_cve_commit(
                 conn,
                 cve_id=cve_id,
+                repo_url=commit.get('repo_url'),
                 commit_sha=sha,
                 method="message_regex",
                 confidence=1.0 if commit.get("mentions_target_cve") else 0.5,
@@ -173,12 +176,16 @@ def ingest():
                 for patch in patch_list:
                     insert_patch(
                         conn,
+                        repo_url=commit.get("repo_url"),
                         commit_sha=sha,
                         file_path=patch["file_path"],
                         language=patch["language"],
                         added_lines=patch["added_lines"],
                         removed_lines=patch["removed_lines"],
-                        diff_text=patch["patch_text"],
+                        hunk_count=patch["hunk_count"],
+                        diff_text=patch["diff_text"],
+                        before_code=patch.get("before_code"),
+                        after_code=patch.get("after_code"),
                     )
                 typer.echo(f"      {len(patch_list)} patch(er) lagret")
             except Exception as e:
@@ -186,7 +193,10 @@ def ingest():
 
     conn.close()
     
-    cleanup_all_temp_repos()
+    try:
+        cleanup_all_temp_repos()
+    except Exception as e:
+        typer.echo(f"Cleanup av temp_repos feilet, men ingest fortsetter. ({e})")
      
     typer.echo("\nIngest fullført – data lagret i databasen!")
 
