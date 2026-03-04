@@ -1,0 +1,68 @@
+from __future__ import annotations
+
+from pathlib import PurePosixPath
+
+
+# Extensions vi aldri vil lagre/print'e patches for
+SKIP_EXTENSIONS = {
+    # docs / text
+    ".md", ".rst", ".txt", ".adoc",
+    # data / configs
+    ".json", ".yml", ".yaml", ".toml", ".ini", ".cfg",
+    # logs / misc
+    ".log", ".csv",
+    # images / binaries
+    ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".pdf",
+}
+
+# Eksakte filnavn vi alltid skipper
+SKIP_FILENAMES = {
+    "readme", "readme.md", "readme.rst", "readme.txt",
+    "changelog", "changelog.md", "changelog.rst", "changelog.txt",
+    "license", "license.md", "license.txt",
+    "copying",
+    "code_of_conduct.md",
+    "contributing.md",
+    "security.md",
+    "release-notes.md",
+}
+
+# Folder-mønstre vi vanligvis ikke vil ha med
+SKIP_DIR_PARTS = {
+    "docs", "doc", ".github",
+    ".vscode", ".idea",
+    "examples", "example",
+    "test", "tests", "__tests__", "testing",
+    "benchmark", "benchmarks",
+    "dist", "build", "out", "target",
+    "node_modules", "vendor",
+}
+
+
+def should_skip_file(file_path: str) -> bool:
+    """
+    Return True hvis vi skal hoppe over fila (ikke lagre patch, ikke print).
+    Filtrerer på extension, filnavn og mappestruktur.
+    """
+    if not file_path:
+        return True
+
+    # Normaliser path (git paths er typisk posix)
+    p = PurePosixPath(file_path)
+    name_lower = p.name.lower()
+
+    # Skip eksakt filnavn
+    if name_lower in SKIP_FILENAMES:
+        return True
+
+    # Skip extension
+    suffix = p.suffix.lower()
+    if suffix in SKIP_EXTENSIONS:
+        return True
+
+    # Skip folder parts
+    parts_lower = {part.lower() for part in p.parts}
+    if parts_lower & SKIP_DIR_PARTS:
+        return True
+
+    return False
