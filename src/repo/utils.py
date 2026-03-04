@@ -7,6 +7,7 @@ import stat
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+import time
 
 from pydriller import Repository
 
@@ -186,20 +187,10 @@ def fetch_commit_modified_files(repo_url: str, commit_sha: str) -> list[dict[str
             file_path = mf.new_path or mf.old_path or ""
             patch_text = getattr(mf, "diff", None) or ""
 
-            before_code = getattr(mf, "source_code_before", None)
-            after_code = getattr(mf, "source_code", None)
-
-            if before_code is None:
-                before_code = getattr(mf, "content_before", None)
-            if after_code is None:
-                after_code = getattr(mf, "content", None)
-
             out.append(
-                {
+                  {
                     "file_path": file_path,
                     "patch_text": patch_text,
-                    "before_code": before_code or "",
-                    "after_code": after_code or "",
                 }
             )
 
@@ -270,4 +261,4 @@ def cleanup_all_temp_repos():
         clone_root.rename(stale)
         print(f"temp_repos var låst – flyttet til {stale} (kan slettes senere).")
     except Exception:
-        print("temp_repos var låst og kunne ikke slettes/rename – lar den ligge.")
+        print("temp_repos var låst og kunne ikke slettes – lar den ligge.")

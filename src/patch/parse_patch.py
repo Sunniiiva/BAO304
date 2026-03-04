@@ -16,29 +16,38 @@ _DIFF_META_PREFIXES = (
 )
 
 
-def parse_patch(patch_text: str | None) -> dict:
+def parse_patch(patch_text: str | None) -> dict[str, Any]:
     patch_text = patch_text or ""
 
-    before_lines = []
-    after_lines = []
+    before_lines: list[str] = []
+    after_lines: list[str] = []
+    diff_lines: list[str] = []
+
     added = removed = 0
     hunk_count = 0
 
     for line in patch_text.splitlines():
-        # skip diff headers
+        # skip diff headers / metadata
         if line.startswith(("diff --git", "index ", "---", "+++", "@@")):
             if line.startswith("@@"):
                 hunk_count += 1
             continue
 
+        # only changed lines
         if line.startswith("+") and not line.startswith("+++"):
             added += 1
-            after_lines.append(line[1:])
+            content = line[1:]
+            after_lines.append(content)
+            diff_lines.append(f"+ {content}")
+
         elif line.startswith("-") and not line.startswith("---"):
             removed += 1
-            before_lines.append(line[1:])
+            content = line[1:]
+            before_lines.append(content)
+            diff_lines.append(f"- {content}")
+
         else:
-            # kontekstlinjer ignoreres (eller ta de med hvis du vil ha mer)
+            # context lines ignored
             pass
 
     changed = added + removed
@@ -48,6 +57,9 @@ def parse_patch(patch_text: str | None) -> dict:
         "removed_lines": removed,
         "changed_lines": changed,
         "hunk_count": hunk_count,
+
+        # ONLY changed lines (what you want to print/store)
         "before_code": "\n".join(before_lines),
         "after_code": "\n".join(after_lines),
+        "diff_only": "\n".join(diff_lines),
     }
