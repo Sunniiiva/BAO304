@@ -39,7 +39,6 @@ CREATE TABLE IF NOT EXISTS patch (
   added_lines   INTEGER,
   removed_lines INTEGER,
   hunk_count    INTEGER,
-  diff_text     TEXT,
   FOREIGN KEY (repo_url, commit_sha)
     REFERENCES commits(repo_url, sha)
     ON DELETE CASCADE  -- Hvis commit slettes, slettes tilhørende patcher
@@ -77,24 +76,10 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     return conn
 
 
-def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, coldef: str) -> None:
-    cols = [row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()]
-    if column not in cols:
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coldef}")
-        conn.commit()
-
-
-def migrate_db(conn: sqlite3.Connection) -> None:
-    # Legg til nye kolonner uten å ødelegge eksisterende DB
-    _add_column_if_missing(conn, "patch", "before_code", "TEXT")
-    _add_column_if_missing(conn, "patch", "after_code", "TEXT")
-
-
 def init_db(conn: sqlite3.Connection) -> None:
     """Oppretter tabeller/indekser hvis de ikke finnes fra før."""
     conn.executescript(SCHEMA_SQL)
     conn.commit()
-    migrate_db(conn)
 
 
 def upsert_cve(
@@ -171,9 +156,6 @@ def insert_patch(
     removed_lines: Optional[int] = None,
     hunk_count: Optional[int] = None,
     changed_lines: Optional[int] = None,  # ikke lagret i schemaet per nå (beholdt for kompat)
-    diff_text: Optional[str] = None,
-    before_code: Optional[str] = None,
-    after_code: Optional[str] = None,
 ) -> int:
     """Legger inn en patch-rad (typisk per fil i en commit)."""
     if not repo_url:
@@ -184,15 +166,13 @@ def insert_patch(
         """
         INSERT INTO patch(
           repo_url, commit_sha, file_path, language,
-          added_lines, removed_lines, hunk_count, diff_text,
-          before_code, after_code
+          added_lines, removed_lines, hunk_count
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         (
             repo_url, commit_sha, file_path, language,
-            added_lines, removed_lines, hunk_count, diff_text,
-            before_code, after_code
+            added_lines, removed_lines, hunk_count
         ),
     )
     conn.commit()
