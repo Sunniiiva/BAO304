@@ -7,6 +7,7 @@ import stat
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+import time
 
 from pydriller import Repository
 
@@ -64,15 +65,23 @@ def extract_repo_and_hash(commit_url: str):
 def fetch_commit_data(repo_url: str, commit_hash: str):
     """
     Henter metadata og filendringer for en gitt commit ved hjelp av PyDriller.
-
     Returnerer dict med commit-info og en liste over endrede filer.
-    Ved feil returneres dict med 'error'.
     """
     try:
-        repo = Repository(repo_url)
-        commit = None
+        # Bruk samme klone-strategi som fetch_commit_modified_files()
+        clone_root = Path("temp_repos")
+        clone_root.mkdir(parents=True, exist_ok=True)
 
-        # Finn commiten vi er ute etter
+        repo_dir = clone_root / _repo_dir_name(repo_url)
+        repo_dir.mkdir(parents=True, exist_ok=True)
+
+        repo = Repository(
+            repo_url,
+            clone_repo_to=str(repo_dir),  # IKKE system-temp
+            single=commit_hash,           # kun denne commiten
+        )
+
+        commit = None
         for c in repo.traverse_commits():
             if c.hash == commit_hash:
                 commit = c
@@ -124,7 +133,7 @@ def fetch_commit_data(repo_url: str, commit_hash: str):
             "repo_url": repo_url,
             "modified_files": files_data,
         }
-
+    
     except Exception as e:
         return {"error": f"Feil ved henting av {repo_url}@{commit_hash}: {str(e)}"}
 
@@ -178,20 +187,10 @@ def fetch_commit_modified_files(repo_url: str, commit_sha: str) -> list[dict[str
             file_path = mf.new_path or mf.old_path or ""
             patch_text = getattr(mf, "diff", None) or ""
 
-            before_code = getattr(mf, "source_code_before", None)
-            after_code = getattr(mf, "source_code", None)
-
-            if before_code is None:
-                before_code = getattr(mf, "content_before", None)
-            if after_code is None:
-                after_code = getattr(mf, "content", None)
-
             out.append(
-                {
+                  {
                     "file_path": file_path,
                     "patch_text": patch_text,
-                    "before_code": before_code or "",
-                    "after_code": after_code or "",
                 }
             )
 
@@ -209,16 +208,57 @@ def _handle_remove_readonly(func, path, exc_info):
         os.chmod(path, stat.S_IWRITE)
     except Exception:
         pass
-    func(path)
+
+    try:
+        func(path)
+    except FileNotFoundError:
+        #Hvis filen allerede er slettet av en annen prosess
+        return
+    except PermissionError:
+        #la retry-logikken i cleanup_all_temp_repos håndtere dette
+        raise
+
+
+def _rmtree_with_retries(path: Path, retries: int = 20, delay: float = 0.2) -> bool:
+    """
+    Returnerer True hvis slettet (eller allerede borte), False hvis fortsatt låst etter retries.
+    """
+    for _ in range(retries):
+        if not path.exists():
+            return True
+        try:
+            shutil.rmtree(path, onerror=_handle_remove_readonly)
+            return True
+        except (PermissionError, FileNotFoundError, OSError):
+            time.sleep(delay)
+    return not path.exists()
 
 
 def cleanup_all_temp_repos():
     """
-    Sletter hele temp_repos/-mappen med alle undermapper.
-
-    Bruker onerror-callback for å takle Windows-problemer med read-only .git-filer.
+    Sletter temp_repos. På Windows kan filer være låst en kort stund (WinError 32),
+    så vi retryer. Hvis det fortsatt er låst, kræsjer vi ikke ingest.
     """
     clone_root = Path("temp_repos")
-    if clone_root.exists():
-        shutil.rmtree(clone_root, onerror=_handle_remove_readonly)
+    if not clone_root.exists():
+        return
+
+    # Viktig: ikke stå "inne i" temp_repos som current working directory
+    try:
+        os.chdir(Path(__file__).resolve().parents[2])  # prosjektrot-ish
+    except Exception:
+        pass
+
+    ok = _rmtree_with_retries(clone_root, retries=25, delay=0.2)
+    if ok:
         print("Alle temp_repos slettet!")
+        return
+
+    # Hvis fortsatt låst: ikke kræsj – rename til "stale" og fortsett
+    ts = int(time.time())
+    stale = Path(f"temp_repos__stale_{ts}")
+    try:
+        clone_root.rename(stale)
+        print(f"temp_repos var låst – flyttet til {stale} (kan slettes senere).")
+    except Exception:
+        print("temp_repos var låst og kunne ikke slettes – lar den ligge.")

@@ -3,6 +3,7 @@ from __future__ import annotations
 from src.repo.utils import fetch_commit_modified_files
 from src.patch.parse_patch import parse_patch
 from src.patch.language_detection import detect_language_from_path
+from src.patch.file_filter import should_skip_file
 
 
 def fetch_patch_data(repo_url: str, commit_sha: str) -> list[dict]:
@@ -22,12 +23,11 @@ def fetch_patch_data(repo_url: str, commit_sha: str) -> list[dict]:
 
     for file in modified_files:
         file_path = file.get("file_path", "")
+        if should_skip_file(file_path):
+            continue
         patch_text = file.get("patch_text")
 
         parsed = parse_patch(patch_text)
-        
-        before_code = file.get("before_code") or parsed.get("before_code", "")
-        after_code = file.get("after_code") or parsed.get("after_code", "")
 
         patch_data.append(
             {
@@ -44,9 +44,9 @@ def fetch_patch_data(repo_url: str, commit_sha: str) -> list[dict]:
                 "hunk_count": parsed.get("hunk_count", 0),
 
                 # Raw data 
-                "diff_text": patch_text,
-                "before_code": before_code,
-                "after_code": after_code,
+                "diff_text": parsed.get("diff_only", ""),
+                "before_code": parsed.get("before_code", ""),
+                "after_code": parsed.get("after_code", ""),
             }
         )
 
