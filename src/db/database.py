@@ -44,6 +44,17 @@ CREATE TABLE IF NOT EXISTS patch (
     ON DELETE CASCADE  -- Hvis commit slettes, slettes tilhørende patcher
 );
 
+CREATE TABLE IF NOT EXISTS functions (
+  function_id     INTEGER PRIMARY KEY AUTOINCREMENT,  -- Unik ID for function-raden
+  repo_url        TEXT NOT NULL,                      -- Hvilket repository funksjonen tilhører
+  commit_sha      TEXT NOT NULL,                      -- Commit-hash funksjonen er knyttet til
+  vuln_function   TEXT,                               -- Funksjonen som inneholder sårbarheten
+  patch_function  TEXT,                               -- Funksjonen der patchen er gjort
+  FOREIGN KEY (repo_url, commit_sha)
+    REFERENCES commits(repo_url, sha)
+    ON DELETE CASCADE  -- Hvis commit slettes, slettes tilhørende function-rader
+);
+
 CREATE TABLE IF NOT EXISTS cve_commit (
   cve_id     TEXT NOT NULL,      -- Hvilken CVE koblingen gjelder
   repo_url   TEXT NOT NULL,      -- Repository
@@ -59,6 +70,7 @@ CREATE TABLE IF NOT EXISTS cve_commit (
 
 -- Indekser for raskere oppslag når databasen blir større
 CREATE INDEX IF NOT EXISTS idx_patch_repo_sha ON patch(repo_url, commit_sha);
+CREATE INDEX IF NOT EXISTS idx_functions_repo_sha ON functions(repo_url, commit_sha);
 CREATE INDEX IF NOT EXISTS idx_cve_commit_repo_sha ON cve_commit(repo_url, commit_sha);
 CREATE INDEX IF NOT EXISTS idx_cve_commit_cve_id ON cve_commit(cve_id);
 """
@@ -179,6 +191,34 @@ def insert_patch(
     return int(cur.lastrowid)  # Returnerer ID til nyopprettet patch
 
 
+def insert_function(
+    conn: sqlite3.Connection,
+    *,
+    repo_url: str,
+    commit_sha: str,
+    vuln_function: Optional[str] = None,
+    patch_function: Optional[str] = None,
+) -> int:
+    """Legger inn en function-rad knyttet til en commit."""
+    if not repo_url:
+        raise ValueError("repo_url must be provided for function rows (FK to commits).")
+
+    # Setter inn én rad i functions-tabellen
+    cur = conn.execute(
+        """
+        INSERT INTO functions(
+          repo_url, commit_sha, vuln_function, patch_function
+        )
+        VALUES (?, ?, ?, ?)
+        """,
+        (
+            repo_url, commit_sha, vuln_function, patch_function
+        ),
+    )
+    conn.commit()
+    return int(cur.lastrowid)  # Returnerer ID til nyopprettet function-rad
+
+
 def link_cve_commit(
     conn: sqlite3.Connection,
     *,
@@ -226,4 +266,29 @@ def get_patches_for_commit(conn: sqlite3.Connection, repo_url: str, commit_sha: 
     return conn.execute(
         "SELECT * FROM patch WHERE repo_url = ? AND commit_sha = ?",
         (repo_url, commit_sha),
+    ).fetchall()
+
+
+def get_functions_for_commit(conn: sqlite3.Connection, repo_url: str, commit_sha: str):
+    """Henter function-rader for en commit."""
+    return conn.execute(
+        "SELECT * FROM functions WHERE repo_url = ? AND commit_sha = ?",
+        (repo_url, commit_sha),
+    ).fetchall()
+
+
+def get_function_overview(conn: sqlite3.Connection):
+    """Henter oversikt med commit-melding, SHA, vuln_function og patch_function."""
+    return conn.execute(
+        """
+        SELECT
+          c.message AS commit,
+          f.commit_sha AS sha,
+          f.vuln_function,
+          f.patch_function
+        FROM functions f
+        JOIN commits c
+          ON c.repo_url = f.repo_url
+         AND c.sha = f.commit_sha
+        """
     ).fetchall()
