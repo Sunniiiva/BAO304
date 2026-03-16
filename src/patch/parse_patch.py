@@ -17,7 +17,7 @@ _DIFF_META_PREFIXES = (
 
 
  #gammel funksjon for å hente ut sårbare / patchede linjer
-"""def parse_patch(patch_text: str | None) -> dict[str, Any]:
+def parse_patch(patch_text: str | None) -> dict[str, Any]:
     patch_text = patch_text or ""
 
     before_lines: list[str] = []
@@ -63,4 +63,4 @@ _DIFF_META_PREFIXES = (
         "before_code": "\n".join(before_lines),
         "after_code": "\n".join(after_lines),
         "diff_only": "\n".join(diff_lines),
-    }"""
+    }
