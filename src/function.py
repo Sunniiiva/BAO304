@@ -51,14 +51,14 @@ def fetch_commit_data(repo_url: str, commit_hash: str):
                 lines_added = added
                 lines_deleted = deleted
                 error = 0
-                    
-                
             except Exception as file_err:
                  change_type = unknown
                  patch_text = ""
                  lines_added = 0
                  lines_added = 0
                  error = str(file_err),
+        
+            
                     
                 
             files_data.append(
@@ -69,6 +69,7 @@ def fetch_commit_data(repo_url: str, commit_hash: str):
                         "lines_added": lines_added,
                         "lines_deleted": lines_deleted,
                         "error": error
+
                     }
                     )
 
