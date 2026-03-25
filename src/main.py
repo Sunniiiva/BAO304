@@ -19,7 +19,7 @@ from src.cve import (
 from src.repo import process_cve_references
 from src.patch import fetch_patch_data
 from src.patch.parse_patch import parse_patch
-from src.functions import patch_function, vuln_function
+from src.functions import vuln_and_patch_function
 
 from src.db import (
     connect,
@@ -199,51 +199,31 @@ def ingest():
 
             except Exception as e:
                 typer.echo(f"      Patch-henting feilet: {e}")
+    
 
-# Hent og lagre patch-funksjoner (etter endringen)
+# Hent og lagre kombinerte funksjoner
             try:
-                patch_functions = patch_function(repo_url, sha)
-
-                for fn in patch_functions:
+                combined_functions = vuln_and_patch_function(repo_url, sha)
+                typer.echo(f"DEBUG: extracted {len(combined_functions)} functions")
+                for fn in combined_functions:
                     insert_function(
                         conn,
                         repo_url=repo_url,
                         commit_sha=sha,
                         file_path=fn["file_path"],
                         method_name=fn["method_name"],
-                        start_line=fn["start_line"],
-                        end_line=fn["end_line"],
-                        vuln_function=None,
-                        patch_function=fn["patch_function"],
-                    )
-
-                typer.echo(f"      {len(patch_functions)} patch-funksjon(er) lagret")
-
-            except Exception as e:
-                typer.echo(f"      Patch-funksjonshenting feilet: {e}")
-
-# Hent og lagre vuln-funksjoner (før endringen)
-            try:
-                vuln_functions = vuln_function(repo_url, sha)
-
-                for fn in vuln_functions:
-                    insert_function(
-                        conn,
-                        repo_url=repo_url,
-                        commit_sha=sha,
-                        file_path=fn["file_path"],
-                        method_name=fn["method_name"],
-                        start_line=fn["start_line"],
-                        end_line=fn["end_line"],
+                        patched_start_line=fn["patched_start_line"],
+                        patched_end_line=fn["patched_end_line"],
+                        vuln_start_line=fn["vuln_start_line"],
+                        vuln_end_line=fn["vuln_end_line"],
                         vuln_function=fn["vuln_function"],
-                        patch_function=None,
-                    )
+                        patch_function=fn["patch_function"],
+                                            )
 
-                typer.echo(f"      {len(vuln_functions)} vuln-funksjon(er) lagret")
+                typer.echo(f"      {len(combined_functions)}funksjon(er) lagret")
 
             except Exception as e:
-                typer.echo(f"      Vuln-funksjonshenting feilet: {e}")
-                
+                                typer.echo(f"      funksjonshenting feilet: {e}")    
 
 # Lukk databasen og rydd opp
     conn.close()
@@ -486,3 +466,71 @@ def show(cve_id: str):
 
 if __name__ == "__main__":
     app()
+
+
+
+""" # Hent og lagre patch-funksjoner (etter endringen)
+            try:
+                patch_functions = patch_function(repo_url, sha)
+
+                for fn in patch_functions:
+                    insert_function(
+                        conn,
+                        repo_url=repo_url,
+                        commit_sha=sha,
+                        file_path=fn["file_path"],
+                        method_name=fn["method_name"],
+                        start_line=fn["start_line"],
+                        end_line=fn["end_line"],
+                        vuln_function=None,
+                        patch_function=fn["patch_function"],
+                    )
+
+                typer.echo(f"      {len(patch_functions)} patch-funksjon(er) lagret")
+
+            except Exception as e:
+                typer.echo(f"      Patch-funksjonshenting feilet: {e}")
+
+# Hent og lagre vuln-funksjoner (før endringen)
+            try:
+                vuln_functions = vuln_function(repo_url, sha)
+
+                for fn in vuln_functions:
+                    insert_function(
+                        conn,
+                        repo_url=repo_url,
+                        commit_sha=sha,
+                        file_path=fn["file_path"],
+                        method_name=fn["method_name"],
+                        start_line=fn["start_line"],
+                        end_line=fn["end_line"],
+                        vuln_function=fn["vuln_function"],
+                        patch_function=None,
+                    )
+
+                typer.echo(f"      {len(vuln_functions)} vuln-funksjon(er) lagret")
+
+            except Exception as e:
+                typer.echo(f"      Vuln-funksjonshenting feilet: {e}")
+# Hent og lagre kombinerte liste over vuln og patch funksjoner
+            try:
+                functions = vuln_function(repo_url, sha)
+
+                for fn in vuln_functions:
+                    insert_function(
+                        conn,
+                        repo_url=repo_url,
+                        commit_sha=sha,
+                        file_path=fn["file_path"],
+                        method_name=fn["method_name"],
+                        start_line=fn["start_line"],
+                        end_line=fn["end_line"],
+                        vuln_function=fn["vuln_function"],
+                        patch_function=None,
+                    )
+
+                typer.echo(f"      {len(vuln_functions)} vuln-funksjon(er) lagret")
+
+            except Exception as e:
+                typer.echo(f"      Vuln-funksjonshenting feilet: {e}")
+                """

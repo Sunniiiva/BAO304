@@ -65,8 +65,10 @@ CREATE TABLE IF NOT EXISTS functions (
   commit_sha      TEXT NOT NULL,                      -- Commit-hash funksjonen er knyttet til
   file_path       TEXT,                               -- Hvilken fil funksjonen ligger i
   method_name     TEXT,                               -- Navnet på metoden funksjonen hører til
-  start_line      INTEGER,                            
-  end_line        INTEGER,
+  patched_start_line      INTEGER,                            
+  patched_end_line        INTEGER,
+  vuln_start_line         INTEGER,
+  vuln_end_line           INTEGER,
   vuln_function   TEXT,                               -- Funksjonen som inneholder sårbarheten
   patch_function  TEXT,                               -- Funksjonen der patchen er gjort
   FOREIGN KEY (repo_url, commit_sha)
@@ -247,9 +249,11 @@ def insert_function(
     repo_url: str,
     commit_sha: str,
     file_path: Optional[str] = None,
-    method_name: Optional[str] = None,
-    start_line: Optional[int] = None,
-    end_line: Optional[int] = None,
+    function_name: Optional[str] = None,
+    patched_start_line: Optional[int] = None,
+    patched_end_line: Optional[int] = None,
+    vuln_start_line: Optional[int] = None,
+    vuln_end_line: Optional[int] = None,
     vuln_function: Optional[str] = None,
     patch_function: Optional[str] = None,
 ) -> int:
@@ -261,18 +265,20 @@ def insert_function(
     cur = conn.execute(
         """
         INSERT INTO functions(
-          repo_url, commit_sha, file_path, method_name, start_line, end_line,
+          repo_url, commit_sha, file_path, function_name, patched_start_line, patched_end_line, vuln_start_line, vuln_end_line, 
           vuln_function, patch_function
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             repo_url,
             commit_sha,
             file_path,
-            method_name,
-            start_line,
-            end_line,
+            function_name,
+            patched_start_line,
+            patched_end_line,
+            vuln_start_line,
+            vuln_end_line,
             vuln_function,
             patch_function,
         ),
@@ -352,9 +358,11 @@ def get_functions_for_commit(conn: sqlite3.Connection, repo_url: str, commit_sha
         """
         SELECT 
         file_path,
-        method_name,
-        start_line,
-        end_line,
+        function_name,
+        patched_start_line,
+        patched_end_line,
+        vuln_start_line,
+        vuln_end_line,
         vuln_function,
         patch_function
         FROM functions
