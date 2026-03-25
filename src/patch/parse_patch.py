@@ -16,6 +16,7 @@ _DIFF_META_PREFIXES = (
 )
 
 
+ #gammel funksjon for å hente ut sårbare / patchede linjer
 def parse_patch(patch_text: str | None) -> dict[str, Any]:
     patch_text = patch_text or ""
 

@@ -1,8 +1,7 @@
-"""
-Main CLI for CVE Commit Analysis Pipeline.
-Henter CVE-data, finner commits, patches og lagrer alt i SQLite.
-"""
-
+# Programmet bruker Typer for å lage et komandilinjegrensesnitt (CLI)
+# Her impoteres biblitekene og modulene som brukes i programmet
+# I tilleg impoteres egene funskjoner fra prosjektets moduler for å lese
+# - cve-data, hente commits, patches, funkjoner og lagre alt i databasen
 import glob
 from pathlib import Path
 import typer
@@ -20,6 +19,7 @@ from src.cve import (
 from src.repo import process_cve_references
 from src.patch import fetch_patch_data
 from src.patch.parse_patch import parse_patch
+from src.functions import vuln_and_patch_function
 
 from src.db import (
     connect,
@@ -27,13 +27,19 @@ from src.db import (
     upsert_cve,
     upsert_commit,
     insert_patch,
+    insert_function,
     link_cve_commit,
     get_commits_for_cve,
     get_patches_for_commit,
+    get_functions_for_commit,
 )
 
 from src.repo.utils import cleanup_all_temp_repos
 
+
+#-----------------------------------
+# Oppsett av CLI-APP og databasesti
+#-----------------------------------
 app = typer.Typer()
 DB_PATH = Path("data/processed/cve_commits.db")
 
@@ -48,7 +54,7 @@ def main(ctx: typer.Context):
         raise typer.Exit(code=0)
 
 # ----------------------------------
-# Test kommando
+# HELLO Test kommando
 # ----------------------------------
 @app.command()
 def hello():
@@ -56,22 +62,21 @@ def hello():
     typer.echo("Hello, CVE Commit Analysis Pipeline!")
 
 # ----------------------------------
-# Ingest kommando: Full pipeline for å lese CVE-filer, finne commits og patches, og lagre i DB.
+# INGEST kommando: Hoved kommandoen i programmet
 # ----------------------------------
 @app.command()
 def ingest():
-    """
-    Leser CVE-filer, finner commits og patches, og lagrer alt i SQLite.
-    """
+    
+# Leser CVE-filer, finner commits, patcher og funksjoner, og lagrer alt i SQLite.
+
     typer.echo("Starter ingest-pipeline...")
 
-
-    # Koble til / opprett database
+# Koble til / opprett database
     conn = connect(DB_PATH)
     init_db(conn)
     typer.echo(f"Database klar: {DB_PATH}")
 
-    # Finn alle CVE-filer
+# Finn alle CVE-filer
     cve_files = glob.glob("data/raw/cve/*.json")
     if not cve_files:
         typer.echo("Ingen CVE-filer funnet i data/raw/cve")
@@ -79,30 +84,26 @@ def ingest():
 
     typer.echo(f"Fant {len(cve_files)} CVE-fil(er)")
 
-    
     for cve_file in cve_files:
-    
-
         typer.echo(f"\nProsesserer {Path(cve_file).name}")
         cve_data = load_cve_from_file(cve_file)
 
-        # Hent basisinfo om CVE
+# Hent basisinfo om CVE
         cve_id, title = extract_cve_info(cve_data)
         products = extract_products(cve_data)
-       
-       #Hopper over CVE-er med rejected states 
+
+# Hopper over rejected
         state = extract_state(cve_data)
         if state == "REJECTED":
             typer.echo(f"hopper over {cve_id}, state ble rejected")
             continue
 
-        # Ekstraher CVSS-score og alvorlighetsgrad, samt CWE-IDer
+# CVSS / CWE
         cvss_score = extract_cvss_score(cve_data) or {}
         score = cvss_score.get("score")
         severity = cvss_score.get("severity")
         cwe_list = extract_cwe_ids(cve_data)
 
-        # CVE JSON-struktur fra CVE-skjemaet.
         description = (
             cve_data.get("containers", {})
             .get("cna", {})
@@ -116,7 +117,7 @@ def ingest():
         typer.echo(f"  Cvss_score: {score}")
         typer.echo(f"  alvorlighetsgrad: {severity}")
 
-        # Lagre CVE i databasen - må skaleres når database blir oppdatert
+# Lagre CVE
         upsert_cve(
             conn,
             cve_id=cve_id,
@@ -126,15 +127,11 @@ def ingest():
             cvss_score=score,
             cve_title=title,
             cwe=",".join(cwe_list) if cwe_list else None,
-            state=state
+            state=state,
         )
         typer.echo("  CVE lagret")
 
-        # Her må kode for å lagre informasjon om cwe legges til
-        #upsert_cwe()
-        
-
-        # Hent commits for denne CVE-en
+# Finn commits for denne CVE-en
         results = process_cve_references(cve_data)
         commits = results.get("commit_data", [])
 
@@ -146,27 +143,32 @@ def ingest():
                 continue
 
             sha = commit["commit_hash"]
+            repo_url = commit.get("repo_url")
             msg = commit.get("commit_message", "")
             author = commit.get("author", "")
             date = commit.get("date", "")
 
-            # Lagre commit i databasen
+            if not repo_url:
+                typer.echo(f"    Skipper commit {sha[:8]}: repo_url mangler")
+                continue
+
+# Lagre commit
             upsert_commit(
                 conn,
+                repo_url=repo_url,
                 sha=sha,
                 url=None,
                 message=msg,
                 commit_date=date,
                 author=author,
                 authored_date=None,
-                repo_url=commit.get('repo_url')
             )
 
-            # Lagre kobling CVE ↔ commit
+# Lagre kobling mellom CVE og commit
             link_cve_commit(
                 conn,
                 cve_id=cve_id,
-                repo_url=commit.get('repo_url'),
+                repo_url=repo_url,
                 commit_sha=sha,
                 method="message_regex",
                 confidence=1.0 if commit.get("mentions_target_cve") else 0.5,
@@ -174,47 +176,74 @@ def ingest():
 
             typer.echo(f"    Commit {sha[:8]} lagret")
 
-            # Hent patch-data for denne committen
+# Hent og lagre patcher
             try:
-                patch_list = fetch_patch_data(commit.get('repo_url', ''), sha)
+                patch_list = fetch_patch_data(repo_url, sha)
+
                 for patch in patch_list:
                     insert_patch(
                         conn,
-                        repo_url=commit.get("repo_url"),
+                        repo_url=repo_url,
                         commit_sha=sha,
                         file_path=patch["file_path"],
                         language=patch["language"],
                         added_lines=patch["added_lines"],
                         removed_lines=patch["removed_lines"],
                         hunk_count=patch["hunk_count"],
-                        diff_text=patch["diff_text"],
+                        diff_text=patch.get("diff_text"),
                         before_code=patch.get("before_code"),
                         after_code=patch.get("after_code"),
                     )
+
                 typer.echo(f"      {len(patch_list)} patch(er) lagret")
+
             except Exception as e:
                 typer.echo(f"      Patch-henting feilet: {e}")
-
-    conn.close()
     
+
+# Hent og lagre kombinerte funksjoner
+            try:
+                combined_functions = vuln_and_patch_function(repo_url, sha)
+                typer.echo(f"DEBUG: extracted {len(combined_functions)} functions")
+                for fn in combined_functions:
+                    insert_function(
+                        conn,
+                        repo_url=repo_url,
+                        commit_sha=sha,
+                        file_path=fn["file_path"],
+                        method_name=fn["method_name"],
+                        patched_start_line=fn["patched_start_line"],
+                        patched_end_line=fn["patched_end_line"],
+                        vuln_start_line=fn["vuln_start_line"],
+                        vuln_end_line=fn["vuln_end_line"],
+                        vuln_function=fn["vuln_function"],
+                        patch_function=fn["patch_function"],
+                                            )
+
+                typer.echo(f"      {len(combined_functions)}funksjon(er) lagret")
+
+            except Exception as e:
+                                typer.echo(f"      funksjonshenting feilet: {e}")    
+
+# Lukk databasen og rydd opp
+    conn.close()
+
     try:
         cleanup_all_temp_repos()
     except Exception as e:
         typer.echo(f"Cleanup av temp_repos feilet, men ingest fortsetter. ({e})")
-     
+
     typer.echo("\nIngest fullført – data lagret i databasen!")
 
 # ----------------------------------
-# Kommando for å vise statistikk og detaljer fra databasen
+# STATS Kommando for å vise statistikk og detaljer fra databasen
 # ----------------------------------
 @app.command()
 def stats():
-    """
-    Viser statistikk fra databasen.
-    """
+  
     conn = connect(DB_PATH)
     
-    # Totalt antall CVE-er, commits, patches
+#Totalt antall CVE-er, commits, patches
     total_cve = conn.execute("SELECT COUNT(*) FROM cve").fetchone()[0]
     total_commits = conn.execute("SELECT COUNT(*) FROM commits").fetchone()[0]
     total_patches = conn.execute("SELECT COUNT(*) FROM patch").fetchone()[0]
@@ -228,21 +257,21 @@ Database-statistikk:
 
     conn.close()
 
-# ----------------------------------
-# Kommando for å vise detaljer for en spesifikk CVE-ID
-# ----------------------------------
+# ----------------------------------------------------------
+# SHOW Kommando for å vise detaljer for en spesifikk CVE-ID
+# ----------------------------------------------------------
 @app.command()
 def show(cve_id: str):
-    """
-    Vis detaljer for en spesifikk CVE-ID.
-    """
+    
+# Vis detaljer for en spesifikk CVE-ID.
     import re
-
     conn = connect(DB_PATH)
 
+# Hjelpefunksjon som gjør none -> tom streng. 
     def _safe(v) -> str:
         return "" if v is None else str(v)
 
+# Hjelpefunskjon somm bruker enkel heuristikk for å telle sansynlige typeendringer i diff. 
     def _count_type_changes(diff_text: str) -> int:
         """Heuristikk: teller -/+ linjepar med felles identifikator(er) og typeord."""
         if not diff_text:
@@ -286,10 +315,12 @@ def show(cve_id: str):
             i += 1
         return type_changes
 
+# hjelpefunskjon som gjør diff-utskriften enklere å lese ved å fjerne diff metadata 
+# og kunn vise linker som er lagt til eller fjernet.
     def _slim_diff(diff_text: str) -> str:
-        """Kun +/- linjer, uten diff-metadata (slik skjermbildet ditt viser)."""
         if not diff_text:
             return ""
+
         out_lines: list[str] = []
         for ln in diff_text.splitlines():
             if ln.startswith(("diff --git", "index ", "@@", "---", "+++")):
@@ -299,16 +330,19 @@ def show(cve_id: str):
             elif ln.startswith("-") and not ln.startswith("---"):
                 out_lines.append(f"- {ln[1:]}")
         return "\n".join(out_lines)
-
+    
+# hent cve fra databasen
     cve_row = conn.execute("SELECT * FROM cve WHERE cve_id = ?", (cve_id,)).fetchone()
     if not cve_row:
         typer.echo(f"CVE {cve_id} ikke funnet")
         conn.close()
         return
-
+    
+# hent commits for cve-en
     commits = get_commits_for_cve(conn, cve_id)
     sep = "=" * 70
 
+# vis kun cve info hvis ingen committs finnes
     if not commits:
         typer.echo(sep)
         typer.echo(f"CVE: {cve_id}")
@@ -321,11 +355,14 @@ def show(cve_id: str):
         typer.echo(sep)
         conn.close()
         return
-
+    
+# gå gjennom hver commit og vis detaljer
     for commit in commits:
         repo_url = commit["repo_url"]
         sha = commit["sha"]
+
         patches = get_patches_for_commit(conn, repo_url, sha)
+        functions = get_functions_for_commit(conn, repo_url, sha)
 
         typer.echo(sep)
         typer.echo(f"CVE: {cve_id}")
@@ -338,13 +375,16 @@ def show(cve_id: str):
         typer.echo(f"Commit: {sha[:12]}...")
         typer.echo(f"Repository: {repo_url}")
         typer.echo(f"Files modified: {len(patches)}")
+        typer.echo(f"Functions stored: {len(functions)}")
         typer.echo(sep)
         typer.echo("")
 
         total_added = 0
         total_removed = 0
         type_changes = 0
-
+        
+        
+# vis patch informasjon for hver fil
         for idx, p in enumerate(patches, start=1):
             file_path = p["file_path"]
             before_code = _safe(p["before_code"] if "before_code" in p.keys() else None)
@@ -359,28 +399,138 @@ def show(cve_id: str):
             typer.echo("-" * 70)
             typer.echo("")
             typer.echo("--- BEFORE")
-            typer.echo(before_code.rstrip())
+            typer.echo(before_code.rstrip() if before_code.strip() else "[Ingen before_code lagret]")
             typer.echo("")
             typer.echo("+++ AFTER")
-            typer.echo(after_code.rstrip())
+            typer.echo(after_code.rstrip() if after_code.strip() else "[Ingen after_code lagret]")
             typer.echo("")
             typer.echo("--- DIFF")
             slim = _slim_diff(diff_text)
-            typer.echo((slim or diff_text).rstrip())
+            diff_out = slim or diff_text
+            typer.echo(diff_out.rstrip() if diff_out.strip() else "[Ingen diff lagret]")
             typer.echo("")
             typer.echo("-" * 70)
             typer.echo("")
 
         typer.echo(sep)
+        typer.echo("--- FUNCTIONS")
+        typer.echo("")
+
+# vis funksjoner før og etter endring
+        if functions:
+            for idx, fn in enumerate(functions, start=1):
+                file_path = _safe(fn["file_path"])
+                method_name = _safe(fn["method_name"])
+                start_line = _safe(fn["start_line"])
+                end_line = _safe(fn["end_line"])
+                vuln_text = _safe(fn["vuln_function"])
+                patch_text = _safe(fn["patch_function"])
+
+                typer.echo(f"[{idx}/{len(functions)}] File: {file_path or 'unknown'}")
+                typer.echo(f"Method: {method_name or 'unknown'} ({start_line or '?'}-{end_line or '?'})")
+                typer.echo("-" * 70)
+                typer.echo("")
+
+                if vuln_text.strip():
+                    typer.echo("--- VULN FUNCTION")
+                    typer.echo(vuln_text.rstrip())
+                    typer.echo("")
+
+                if patch_text.strip():
+                    typer.echo("--- PATCH FUNCTION")
+                    typer.echo(patch_text.rstrip())
+                    typer.echo("")
+
+                if not vuln_text.strip() and not patch_text.strip():
+                    typer.echo("[Ingen funksjonskode lagret]")
+                    typer.echo("")
+
+                typer.echo("-" * 70)
+                typer.echo("")
+        else:
+            typer.echo("[Ingen funksjoner lagret]")
+            typer.echo("")
+
+# vis oppsumering for committen
+        typer.echo(sep)
         typer.echo("Summary:")
         typer.echo(f"- Files processed: {len(patches)}")
+        typer.echo(f"- Functions stored: {len(functions)}")
         typer.echo(f"- Lines added: {total_added}")
         typer.echo(f"- Lines removed: {total_removed}")
         typer.echo(f"- Type changes detected: {type_changes}")
         typer.echo(sep)
 
-    conn.close()
+        conn.close()
 
 
 if __name__ == "__main__":
     app()
+
+
+
+""" # Hent og lagre patch-funksjoner (etter endringen)
+            try:
+                patch_functions = patch_function(repo_url, sha)
+
+                for fn in patch_functions:
+                    insert_function(
+                        conn,
+                        repo_url=repo_url,
+                        commit_sha=sha,
+                        file_path=fn["file_path"],
+                        method_name=fn["method_name"],
+                        start_line=fn["start_line"],
+                        end_line=fn["end_line"],
+                        vuln_function=None,
+                        patch_function=fn["patch_function"],
+                    )
+
+                typer.echo(f"      {len(patch_functions)} patch-funksjon(er) lagret")
+
+            except Exception as e:
+                typer.echo(f"      Patch-funksjonshenting feilet: {e}")
+
+# Hent og lagre vuln-funksjoner (før endringen)
+            try:
+                vuln_functions = vuln_function(repo_url, sha)
+
+                for fn in vuln_functions:
+                    insert_function(
+                        conn,
+                        repo_url=repo_url,
+                        commit_sha=sha,
+                        file_path=fn["file_path"],
+                        method_name=fn["method_name"],
+                        start_line=fn["start_line"],
+                        end_line=fn["end_line"],
+                        vuln_function=fn["vuln_function"],
+                        patch_function=None,
+                    )
+
+                typer.echo(f"      {len(vuln_functions)} vuln-funksjon(er) lagret")
+
+            except Exception as e:
+                typer.echo(f"      Vuln-funksjonshenting feilet: {e}")
+# Hent og lagre kombinerte liste over vuln og patch funksjoner
+            try:
+                functions = vuln_function(repo_url, sha)
+
+                for fn in vuln_functions:
+                    insert_function(
+                        conn,
+                        repo_url=repo_url,
+                        commit_sha=sha,
+                        file_path=fn["file_path"],
+                        method_name=fn["method_name"],
+                        start_line=fn["start_line"],
+                        end_line=fn["end_line"],
+                        vuln_function=fn["vuln_function"],
+                        patch_function=None,
+                    )
+
+                typer.echo(f"      {len(vuln_functions)} vuln-funksjon(er) lagret")
+
+            except Exception as e:
+                typer.echo(f"      Vuln-funksjonshenting feilet: {e}")
+                """
