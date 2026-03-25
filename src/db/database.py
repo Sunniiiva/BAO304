@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+#--------------------------------------------------------------
+# IMPORTS: impoterer biblitekene som trengs for DB-hånteringen
+#---------------------------------------------------------------
+from __future__ import annotations 
 import sqlite3
 from pathlib import Path
 
