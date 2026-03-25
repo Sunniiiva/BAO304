@@ -1,34 +1,42 @@
-# Felles funksjoner (hindrer circular imports mellom moduler)
+#---------------------------------------------------------------------
+# Generelle hjelpefunksjoner for parsing av CVE-er, commits og patcher.
+#---------------------------------------------------------------------
+
+#Imports 
 from __future__ import annotations
 
 import os
 import shutil
 import stat
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
-import time
 
 from pydriller import Repository
 
-
+#---------------------------------------------------------------------
+# Funksjon for å parse Github commit-referanser fra CVE-data
+#---------------------------------------------------------------------
 def extract_repo_and_hash(commit_url: str):
     """
-    Ekstraherer repo-URL og commit-hash fra en GitHub-commit-URL.
+    Parser GitHub commit-URL og returnerer:
+      {
+        "repo_url": "https://github.com/owner/repo",
+        "commit_hash": "<sha>"
+      }
 
     Støtter:
-    - Full URL:  https://github.com/owner/repo/commit/<hash>
+    - Vanlig URL: https://github.com/owner/repo/commit/<hash>
     - Markdown:  [tekst](https://github.com/owner/repo/commit/<hash>)
     - Returnerer dict med 'repo_url' og 'commit_hash', eller None hvis parsing feiler.
     """
     if not commit_url or "github.com" not in commit_url:
         return None
 
-    # Hvis URL-en er inne i markdown-lenke [tekst](url), plukk ut url-delen
     if "(" in commit_url and ")" in commit_url:
         commit_url = commit_url.split("(")[-1].split(")")[0]
 
-    # Fjern protokoll, query-parametre og fragments
     clean_url = (
         commit_url.replace("https://", "")
         .replace("http://", "")
@@ -36,10 +44,8 @@ def extract_repo_and_hash(commit_url: str):
         .split("#")[0]
     )
 
-    # Del opp på '/' og fjern tomme deler
     parts = [p for p in clean_url.strip("/").split("/") if p]
 
-    # Format: github.com/<owner>/<repo>/commit/<hash>
     if len(parts) >= 5 and parts[0] == "github.com" and parts[3] == "commit":
         owner = parts[1]
         repo = parts[2]
@@ -49,7 +55,6 @@ def extract_repo_and_hash(commit_url: str):
             "commit_hash": commit_hash,
         }
 
-    # Format: <owner>/<repo>/commit/<hash>
     if len(parts) >= 4 and parts[2] == "commit":
         owner = parts[0]
         repo = parts[1]
@@ -62,35 +67,77 @@ def extract_repo_and_hash(commit_url: str):
     return None
 
 
-def fetch_commit_data(repo_url: str, commit_hash: str):
+def _repo_dir_name(repo_url: str) -> str:
     """
-    Henter metadata og filendringer for en gitt commit ved hjelp av PyDriller.
-    Returnerer dict med commit-info og en liste over endrede filer.
+    Lager et stabilt og lesbart mappenavn basert på repo_url.
+
+    Eksempel:
+      https://github.com/kpdecker/jsdiff -> kpdecker_jsdiff
+    """
+    p = urlparse(repo_url)
+    parts = [x for x in p.path.strip("/").split("/") if x]
+    if len(parts) >= 2:
+        return f"{parts[-2]}_{parts[-1]}"
+    return parts[-1] if parts else "repo"
+
+
+def _load_single_commit(repo_url: str, commit_hash: str):
+    """
+    Traverserer nøyaktig én commit fra repoet.
+    """
+    clone_root = Path("temp_repos")
+    clone_root.mkdir(parents=True, exist_ok=True)
+
+    repo_dir = clone_root / _repo_dir_name(repo_url)
+    repo_dir.mkdir(parents=True, exist_ok=True)
+
+    repo = Repository(
+        repo_url,
+        clone_repo_to=str(repo_dir),
+        single=commit_hash,
+    )
+
+    for commit in repo.traverse_commits():
+        if commit.hash == commit_hash:
+            return commit
+
+    return None
+
+
+def fetch_commit_metadata(repo_url: str, commit_hash: str):
+    """
+    Henter kun metadata for en commit.
+    Dette er lettere enn å bygge full fil-/patch-struktur.
     """
     try:
-        # Bruk samme klone-strategi som fetch_commit_modified_files()
-        clone_root = Path("temp_repos")
-        clone_root.mkdir(parents=True, exist_ok=True)
-
-        repo_dir = clone_root / _repo_dir_name(repo_url)
-        repo_dir.mkdir(parents=True, exist_ok=True)
-
-        repo = Repository(
-            repo_url,
-            clone_repo_to=str(repo_dir),  # IKKE system-temp
-            single=commit_hash,           # kun denne commiten
-        )
-
-        commit = None
-        for c in repo.traverse_commits():
-            if c.hash == commit_hash:
-                commit = c
-                break
-
+        commit = _load_single_commit(repo_url, commit_hash)
         if not commit:
             return {"error": f"Commit {commit_hash} ikke funnet i {repo_url}"}
 
-        files_data = []
+        return {
+            "commit_hash": commit.hash,
+            "commit_message": commit.msg,
+            "author": commit.author.name if commit.author else "unknown",
+            "date": str(commit.committer_date) if commit.committer_date else "",
+            "repo_url": repo_url,
+        }
+
+    except Exception as e:
+        return {"error": f"Feil ved henting av {repo_url}@{commit_hash}: {str(e)}"}
+
+
+def fetch_commit_bundle(repo_url: str, commit_hash: str):
+    """
+    Henter både commit metadata og endrede filer i én traversering.
+    Brukes for optimalisert run-all.
+    """
+    try:
+        commit = _load_single_commit(repo_url, commit_hash)
+        if not commit:
+            return {"error": f"Commit {commit_hash} ikke funnet i {repo_url}"}
+
+        files_data: list[dict[str, Any]] = []
+
         for file in commit.modified_files:
             try:
                 diff_text = str(file.diff) if getattr(file, "diff", None) else ""
@@ -133,66 +180,34 @@ def fetch_commit_data(repo_url: str, commit_hash: str):
             "repo_url": repo_url,
             "modified_files": files_data,
         }
-    
+
     except Exception as e:
         return {"error": f"Feil ved henting av {repo_url}@{commit_hash}: {str(e)}"}
 
 
-def _repo_dir_name(repo_url: str) -> str:
+def fetch_commit_data(repo_url: str, commit_hash: str):
     """
-    Lager et stabilt og lesbart mappenavn basert på repo_url.
-
-    Eksempel:
-      https://github.com/kpdecker/jsdiff -> kpdecker_jsdiff
+    Beholder gammel funksjon for kompatibilitet.
     """
-    p = urlparse(repo_url)
-    parts = [x for x in p.path.strip("/").split("/") if x]
-    if len(parts) >= 2:
-        return f"{parts[-2]}_{parts[-1]}"
-    return parts[-1] if parts else "repo"
+    return fetch_commit_bundle(repo_url, commit_hash)
 
 
 def fetch_commit_modified_files(repo_url: str, commit_sha: str) -> list[dict[str, Any]]:
     """
     Henter detaljer om alle filer som er endret i én spesifikk commit.
-
-    Repoet klones til en lokal temp_repos/-mappe, i en egen undermappe per repo.
-
-    Returnerer liste av:
-      {
-        "file_path": ...,
-        "patch_text": ...,
-        "before_code": ...,
-        "after_code": ...
-      }
     """
-    if not repo_url:
-        raise ValueError("repo_url må settes")
-
-    clone_root = Path("temp_repos")
-    clone_root.mkdir(parents=True, exist_ok=True)
-
-    repo_dir = clone_root / _repo_dir_name(repo_url)
-    repo_dir.mkdir(parents=True, exist_ok=True)
-
-    repo = Repository(
-        repo_url,
-        clone_repo_to=str(repo_dir),  # Klon til vår mappe (ikke OS-temp)
-        single=commit_sha,            # Begrenser til kun denne commiten
-    )
+    bundle = fetch_commit_bundle(repo_url, commit_sha)
+    if not bundle or "error" in bundle:
+        raise RuntimeError(bundle.get("error", "Ukjent feil ved henting av commit-filer"))
 
     out: list[dict[str, Any]] = []
-    for c in repo.traverse_commits():
-        for mf in c.modified_files:
-            file_path = mf.new_path or mf.old_path or ""
-            patch_text = getattr(mf, "diff", None) or ""
-
-            out.append(
-                  {
-                    "file_path": file_path,
-                    "patch_text": patch_text,
-                }
-            )
+    for item in bundle.get("modified_files", []):
+        out.append(
+            {
+                "file_path": item.get("file_path", ""),
+                "patch_text": item.get("patch_text", ""),
+            }
+        )
 
     return out
 
@@ -200,9 +215,6 @@ def fetch_commit_modified_files(repo_url: str, commit_sha: str) -> list[dict[str
 def _handle_remove_readonly(func, path, exc_info):
     """
     Håndterer PermissionError ved sletting på Windows.
-
-    shutil.rmtree kaller denne hvis den møter en fil/mappe den ikke får slettet.
-    Vi gjør path skrivbar (fjerner read-only) og prøver igjen.
     """
     try:
         os.chmod(path, stat.S_IWRITE)
@@ -212,10 +224,8 @@ def _handle_remove_readonly(func, path, exc_info):
     try:
         func(path)
     except FileNotFoundError:
-        #Hvis filen allerede er slettet av en annen prosess
         return
     except PermissionError:
-        #la retry-logikken i cleanup_all_temp_repos håndtere dette
         raise
 
 
@@ -243,9 +253,8 @@ def cleanup_all_temp_repos():
     if not clone_root.exists():
         return
 
-    # Viktig: ikke stå "inne i" temp_repos som current working directory
     try:
-        os.chdir(Path(__file__).resolve().parents[2])  # prosjektrot-ish
+        os.chdir(Path(__file__).resolve().parents[2])
     except Exception:
         pass
 
@@ -254,7 +263,6 @@ def cleanup_all_temp_repos():
         print("Alle temp_repos slettet!")
         return
 
-    # Hvis fortsatt låst: ikke kræsj – rename til "stale" og fortsett
     ts = int(time.time())
     stale = Path(f"temp_repos__stale_{ts}")
     try:

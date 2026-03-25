@@ -1,15 +1,3 @@
-"""
-db package
-
-Ansvar:
-- Opprette/initialisere SQLite database og schema
-- Tilby enkle funksjoner for å lagre og hente:
-  - CVE
-  - commits
-  - patch-rader
-  - kobling CVE <-> commit
-"""
-
 from .database import (
     connect,
     init_db,
@@ -19,6 +7,9 @@ from .database import (
     link_cve_commit,
     get_commits_for_cve,
     get_patches_for_commit,
+    get_sync_state,
+    upsert_sync_state,
+    get_unenriched_commits,
 )
 
 __all__ = [
@@ -30,5 +21,7 @@ __all__ = [
     "link_cve_commit",
     "get_commits_for_cve",
     "get_patches_for_commit",
+    "get_sync_state",
+    "upsert_sync_state",
+    "get_unenriched_commits",
 ]
-

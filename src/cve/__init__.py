@@ -2,11 +2,18 @@
 cve package
 
 Ansvar:
-- Leser CVE JSON fra fil (fetch_cve)
+- Leser CVE JSON fra offisiell zip-kilde (source)
 - Trekker ut/strukturere relevant CVE-data (parse_cve)
 """
 
-from .fetch_cve import load_cve_from_file
+from .source import (
+    get_latest_release_info,
+    find_release_zip_asset,
+    download_release_zip,
+    iter_cve_records_from_zip,
+    iter_cve_records_from_official_source,
+)
+
 from .parse_cve import (
     extract_cve_info,
     extract_products,
@@ -17,7 +24,11 @@ from .parse_cve import (
 )
 
 __all__ = [
-    "load_cve_from_file",
+    "get_latest_release_info",
+    "find_release_zip_asset",
+    "download_release_zip",
+    "iter_cve_records_from_zip",
+    "iter_cve_records_from_official_source",
     "extract_cve_info",
     "extract_products",
     "extract_grouped_references",
@@ -25,4 +36,3 @@ __all__ = [
     "extract_cwe_ids",
     "extract_cvss_score",
 ]
-
