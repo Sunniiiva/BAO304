@@ -1,0 +1,12 @@
+import pandas as pd
+
+
+
+
+# konverterer rader i excel til pandas dataframe
+excel_data = pd.read_excel("data/machine_learning/function_dataset.xlsx")
+
+print(excel_data.iloc[0, 0])  # vulnerable
+print("----- PATCH -----")
+print(excel_data.iloc[0, 1])  # patched
+

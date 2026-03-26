@@ -100,7 +100,7 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
 def main() -> None:
     file_path = Path("data/machine_learning/function_dataset.xlsx")
 
-    # Spreadsheet has no headers, so name the two columns manually
+    # Spreadsheet has no headers, so name the dtwo columns manually
     pairs_df = pd.read_excel(file_path, header=None)
     pairs_df.columns = ["vuln_function", "patch_function"]
 
