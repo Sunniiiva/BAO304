@@ -4,6 +4,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import classification_report, accuracy_score
+from sklearn.metrics import confusion_matrix
 
 
 
@@ -51,9 +52,8 @@ for pair_row, row in excel_data.iterrows():
                 "label": 1
             }
     )
-        
+#Her blir det samme gjort for patchede linjer av kode 
 safe_rows = []
-
 for pair_row, row in excel_data.iterrows():
     patch_code = row[1]
 
@@ -66,34 +66,23 @@ for pair_row, row in excel_data.iterrows():
                     "code": line,
                     "label": 0
                 })
+#lagrer dataen hentet i dataframes, og kombinerer det i et datasett.
+#dette datasettet inkluderer falsk og positiv kode, som knyttes til verdi 1 eller 0
 
 safe_df = pd.DataFrame(safe_rows)
 removed_df = pd.DataFrame(rows)
 removed_df = removed_df.rename(columns={"removed_line": "code"})
-
-
-# -------- COMBINE --------
 dataset = pd.concat([removed_df, safe_df], ignore_index=True)
 
-print(dataset.head())
-print(dataset["label"].value_counts())
-
-
-# -------- TEST --------
-test_vuln = excel_data.loc[0, 0]
-test_patch = excel_data.loc[0, 1]
-
-diff_test = get_removed_lines(test_vuln, test_patch)
-print("\nTEST DIFF:")
-print(diff_test)
+#maskinlæringsmodell for å klassifisere om kode er sårbar eller ikke
 X = dataset["code"]
 y = dataset["label"]
 
 X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=42, stratify=y
+    X, y, test_size=0.22, random_state=42, stratify=y
 )
 
-vectorizer = TfidfVectorizer(max_features=5000, ngram_range=(1, 2))
+vectorizer = TfidfVectorizer(max_features=4000, ngram_range=(1, 2))
 X_train_vec = vectorizer.fit_transform(X_train)
 X_test_vec = vectorizer.transform(X_test)
 
@@ -102,7 +91,8 @@ model.fit(X_train_vec, y_train)
 
 y_pred = model.predict(X_test_vec)
 
-print("Accuracy:", accuracy_score(y_test, y_pred))
 print(classification_report(y_test, y_pred))
+print("nøyaktighet:", accuracy_score(y_test, y_pred))
+print("konfusjonsmatrise:\n [true negative - false positive]\n [false negative - true positive]\n", confusion_matrix(y_test, y_pred))
 
     
