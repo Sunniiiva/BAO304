@@ -5,45 +5,38 @@ from src.patch.parse_patch import parse_patch
 from src.patch.language_detection import detect_language_from_path
 from src.patch.file_filter import should_skip_file
 
-
-def fetch_patch_data(repo_url: str, commit_sha: str) -> list[dict]:
+#-----------------------------------------------------------------
+# Funksjon for å bygge patch-data fra en liste med modified_files
+#-----------------------------------------------------------------
+def build_patch_data_from_modified_files(
+    repo_url: str,
+    commit_sha: str,
+    modified_files: list[dict],
+) -> list[dict]:
     """
-    Fetch and parse patch data for all modified files in a commit.
-    Returns a list of dicts. Keys are aligned with database naming:
-    - repo_url
-    - commit_sha
-    - file_path
-    - language
-    - added_lines / removed_lines / changed_lines / hunk_count
-    - diff_text
-    - before_code / after_code
+    Bygger patch-rader fra en allerede hentet liste med modified_files.
+    Brukes i optimalisert run-all for å unngå ny commit-traversering.
     """
-    modified_files = fetch_commit_modified_files(repo_url, commit_sha)
     patch_data: list[dict] = []
 
     for file in modified_files:
         file_path = file.get("file_path", "")
         if should_skip_file(file_path):
             continue
-        patch_text = file.get("patch_text")
 
+        patch_text = file.get("patch_text", "")
         parsed = parse_patch(patch_text)
 
         patch_data.append(
             {
-                # Metadata
                 "repo_url": repo_url,
                 "commit_sha": commit_sha,
                 "file_path": file_path,
                 "language": detect_language_from_path(file_path),
-
-                # Counts
                 "added_lines": parsed.get("added_lines", 0),
                 "removed_lines": parsed.get("removed_lines", 0),
                 "changed_lines": parsed.get("changed_lines", 0),
                 "hunk_count": parsed.get("hunk_count", 0),
-
-                # Raw data 
                 "diff_text": parsed.get("diff_only", ""),
                 "before_code": parsed.get("before_code", ""),
                 "after_code": parsed.get("after_code", ""),
@@ -51,3 +44,13 @@ def fetch_patch_data(repo_url: str, commit_sha: str) -> list[dict]:
         )
 
     return patch_data
+
+#-------------------------------------------------------------
+# Hovedfunksjon for å hente og parse patch-data for en commit
+#-------------------------------------------------------------
+def fetch_patch_data(repo_url: str, commit_sha: str) -> list[dict]:
+    """
+    Fetch and parse patch data for all modified files in a commit.
+    """
+    modified_files = fetch_commit_modified_files(repo_url, commit_sha)
+    return build_patch_data_from_modified_files(repo_url, commit_sha, modified_files)
