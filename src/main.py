@@ -12,6 +12,8 @@ from src.cve import (
     extract_state,
 )
 from src.cve.source import get_latest_release_info, iter_cve_records_from_official_source
+from src.functions import vuln_and_patch_function
+
 from src.db import (
     connect,
     get_commits_for_cve,
@@ -20,10 +22,13 @@ from src.db import (
     get_unenriched_commits,
     init_db,
     insert_patch,
+    insert_function,
     link_cve_commit,
     upsert_commit,
     upsert_cve,
     upsert_sync_state,
+    get_patches_for_commit,
+    get_functions_for_commit,
 )
 from src.patch.fetch_patch import build_patch_data_from_modified_files
 from src.repo import extract_commit_references
@@ -156,6 +161,30 @@ def enrich_unique_commits(conn, limit: int | None = None) -> dict:
         except Exception as e:
             typer.echo(f"  Patch-henting feilet for {repo_url}@{sha[:8]}: {e}")
 
+        # Hent og lagre kombinerte funksjoner
+        try:
+            combined_functions = vuln_and_patch_function(repo_url, sha)
+            typer.echo(f"DEBUG: extracted {len(combined_functions)} functions")
+
+            for fn in combined_functions:
+                insert_function(
+                    conn,
+                    repo_url=repo_url,
+                    commit_sha=sha,
+                    file_path=fn["file_path"],
+                    method_name=fn["method_name"],
+                    patched_start_line=fn["patched_start_line"],
+                    patched_end_line=fn["patched_end_line"],
+                    vuln_start_line=fn["vuln_start_line"],
+                    vuln_end_line=fn["vuln_end_line"],
+                    vuln_function=fn["vuln_function"],
+                    patch_function=fn["patch_function"],
+                )
+
+            typer.echo(f"      {len(combined_functions)} funksjon(er) lagret")
+
+        except Exception as e:
+            typer.echo(f"      funksjonshenting feilet: {e}")
     return stats
 
 
@@ -320,7 +349,3 @@ def enrich_commits(
 
 if __name__ == "__main__":
     app()
-
-
-    #Slettet show kommando
-    #Slettet stats kommando 

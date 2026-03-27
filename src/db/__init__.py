@@ -17,6 +17,8 @@ from .database import (
     get_sync_state,
     upsert_sync_state,
     get_unenriched_commits,
+    get_functions_for_commit,
+    get_function_overview,
 )
 
 # offentlig API for db-pakken
@@ -33,4 +35,6 @@ __all__ = [
     "get_sync_state",
     "upsert_sync_state",
     "get_unenriched_commits",
+    "get_functions_for_commit",
+    "get_function_overview",
 ]
