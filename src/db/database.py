@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 #--------------------------------------------------------------
 # IMPORTS: impoterer biblitekene som trengs for DB-hånteringen
 #---------------------------------------------------------------
@@ -64,6 +62,23 @@ CREATE TABLE IF NOT EXISTS patch (
         ON UPDATE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS functions (
+  function_id     INTEGER PRIMARY KEY AUTOINCREMENT,  -- Unik ID for function-raden
+  repo_url        TEXT NOT NULL,                      -- Hvilket repository funksjonen tilhører
+  commit_sha      TEXT NOT NULL,                      -- Commit-hash funksjonen er knyttet til
+  file_path       TEXT,                               -- Hvilken fil funksjonen ligger i
+  method_name     TEXT,                               -- Navnet på metoden funksjonen hører til
+  patched_start_line      INTEGER,                            
+  patched_end_line        INTEGER,
+  vuln_start_line         INTEGER,
+  vuln_end_line           INTEGER,
+  vuln_function   TEXT,                               -- Funksjonen som inneholder sårbarheten
+  patch_function  TEXT,                               -- Funksjonen der patchen er gjort
+  FOREIGN KEY (repo_url, commit_sha)
+    REFERENCES commits(repo_url, sha)
+    ON DELETE CASCADE  -- Hvis commit slettes, slettes tilhørende function-rader
+);
+
 CREATE UNIQUE INDEX IF NOT EXISTS uq_patch_commit_file
 ON patch(repo_url, commit_sha, file_path);
 
@@ -84,6 +99,9 @@ ON commits(commit_date);
 
 CREATE INDEX IF NOT EXISTS idx_patch_repo_sha
 ON patch(repo_url, commit_sha);
+
+CREATE INDEX IF NOT EXISTS idx_functions_repo_sha 
+ON functions(repo_url, commit_sha);
 """
 
 #-----------------------------------
@@ -247,6 +265,52 @@ def insert_patch(
     )
     conn.commit()
 
+# ---------------------------------------------
+# Funksjon: Legger inn en funskjonsrad i DB
+# ---------------------------------------------
+def insert_function(
+    conn: sqlite3.Connection,
+    *,
+    repo_url: str,
+    commit_sha: str,
+    file_path: Optional[str] = None,
+    method_name: Optional[str] = None,
+    patched_start_line: Optional[int] = None,
+    patched_end_line: Optional[int] = None,
+    vuln_start_line: Optional[int] = None,
+    vuln_end_line: Optional[int] = None,
+    vuln_function: Optional[str] = None,
+    patch_function: Optional[str] = None,
+) -> int:
+   
+#Legger inn en function-rad knyttet til en commit.
+    if not repo_url:
+        raise ValueError("repo_url must be provided for function rows (FK to commits).")
+
+    cur = conn.execute(
+        """
+        INSERT INTO functions(
+          repo_url, commit_sha, file_path, method_name, patched_start_line, patched_end_line, vuln_start_line, vuln_end_line, 
+          vuln_function, patch_function
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            repo_url,
+            commit_sha,
+            file_path,
+            method_name,
+            patched_start_line,
+            patched_end_line,
+            vuln_start_line,
+            vuln_end_line,
+            vuln_function,
+            patch_function,
+        ),
+    )
+    conn.commit()
+    return int(cur.lastrowid)    
+
 #-----------------------------------------------------------------------
 # 
 #-----------------------------------------------------------------------
@@ -378,6 +442,50 @@ def get_patches_for_commit(
         }
         for row in rows
     ]
+
+# -------------------------------------------------------------------------
+# Funksjon: som henter alle funskjoner som er lagret for en bestemt commit
+# --------------------------------------------------------------------------
+def get_functions_for_commit(conn: sqlite3.Connection, repo_url: str, commit_sha: str):
+    
+# Henter function-rader for en commit.
+    return conn.execute(
+        """
+        SELECT 
+        file_path,
+        method_name,
+        patched_start_line,
+        patched_end_line,
+        vuln_start_line,
+        vuln_end_line,
+        vuln_function,
+        patch_function
+        FROM functions
+        WHERE repo_url = ? AND commit_sha = ?
+        ORDER BY file_path, method_name 
+        """,
+        (repo_url, commit_sha),
+    ).fetchall()
+    
+#----------------------------------------------------------------------------------------
+# Funksjon: som henter en enkel oversikt over lagrende funksjoner sammen med commit-info
+#------------------------------------------------------------------------------------------
+def get_function_overview(conn: sqlite3.Connection):
+    
+# Henter oversikt med commit-melding, SHA, vuln_function og patch_function.
+    return conn.execute(
+        """
+        SELECT
+          c.message AS commit,
+          f.commit_sha AS sha,
+          f.vuln_function,
+          f.patch_function
+        FROM functions f
+        JOIN commits c
+          ON c.repo_url = f.repo_url
+         AND c.sha = f.commit_sha
+        """
+    ).fetchall()    
 
 #-----------------------------------------------------------------------
 # 

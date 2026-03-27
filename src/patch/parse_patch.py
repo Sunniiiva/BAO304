@@ -15,8 +15,10 @@ _DIFF_META_PREFIXES = (
     "rename to",
 )
 
-
- #gammel funksjon for å hente ut sårbare / patchede linjer
+#Src -> extract cve, file level, patch level, function level 
+#-----------------------------------------------------------------------
+# Funksjon for å parse patch-tekst og trekke ut relevant info
+#-----------------------------------------------------------------------
 def parse_patch(patch_text: str | None) -> dict[str, Any]:
     patch_text = patch_text or ""
 
@@ -34,7 +36,7 @@ def parse_patch(patch_text: str | None) -> dict[str, Any]:
                 hunk_count += 1
             continue
 
-        # only changed lines
+        # only changed lines (needs the whole function of the patch for context, with pydriller to get list of modified functions, not with +++)
         if line.startswith("+") and not line.startswith("+++"):
             added += 1
             content = line[1:]

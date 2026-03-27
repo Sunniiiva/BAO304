@@ -13,6 +13,7 @@ dependencies = [
     "pydriller>=2.5",
     "pandas>=2.0",
     "typer>=0.9",
+    "requests>=2.31",
 ]
 
 [tool.setuptools]

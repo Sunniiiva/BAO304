@@ -14,6 +14,9 @@ from .database import (
     link_cve_commit,
     get_commits_for_cve,
     get_patches_for_commit,
+    get_sync_state,
+    upsert_sync_state,
+    get_unenriched_commits,
     get_functions_for_commit,
     get_function_overview,
 )
@@ -29,6 +32,9 @@ __all__ = [
     "link_cve_commit",
     "get_commits_for_cve",
     "get_patches_for_commit",
+    "get_sync_state",
+    "upsert_sync_state",
+    "get_unenriched_commits",
     "get_functions_for_commit",
     "get_function_overview",
 ]
