@@ -11,6 +11,7 @@ from src.cve import (
     extract_cwe_ids,
     extract_state,
 )
+
 from src.cve.source import get_latest_release_info, iter_cve_records_from_official_source
 from src.functions import vuln_and_patch_function
 
@@ -20,6 +21,7 @@ from src.db import (
     get_patches_for_commit,
     get_sync_state,
     get_unenriched_commits,
+    get_unenriched_commits_for_cves,
     init_db,
     insert_patch,
     insert_function,
@@ -30,6 +32,7 @@ from src.db import (
     get_patches_for_commit,
     get_functions_for_commit,
 )
+
 from src.patch.fetch_patch import build_patch_data_from_modified_files
 from src.repo import extract_commit_references
 from src.repo.utils import cleanup_all_temp_repos, fetch_commit_data
@@ -91,10 +94,20 @@ def process_single_cve_metadata(conn, cve_data: dict) -> str | None:
 #--------------------------------------------
 # Funksjon for å enrich-e unike commits med PyDriller
 #---------------------------------------------
-def enrich_unique_commits(conn, limit: int | None = None) -> dict:
+def enrich_unique_commits(
+    conn,
+    limit: int | None = None,
+    cve_ids: list[str] | None = None,
+) -> dict:
     """
-    Henter alle unike commits som finnes i cve_commit, men ikke i commits.
-    Prosesserer hver commit én gang med PyDriller og lagrer patch én gang per file_path.
+    Henter unike commits som finnes i cve_commit, men ikke i commits.
+
+    Hvis cve_ids er satt:
+      - enrich bare commits knyttet til disse CVE-ene.
+    Ellers:
+      - enrich alle unenriched commits i databasen.
+
+    limit brukes bare når cve_ids ikke er satt, eller som ekstra cap hvis ønskelig.
     """
     stats = {
         "commits_found": 0,
@@ -103,7 +116,13 @@ def enrich_unique_commits(conn, limit: int | None = None) -> dict:
         "commits_failed": 0,
     }
 
-    missing_commits = get_unenriched_commits(conn, limit=limit)
+    if cve_ids:
+        missing_commits = get_unenriched_commits_for_cves(conn, cve_ids)
+        if limit is not None:
+            missing_commits = missing_commits[:limit]
+    else:
+        missing_commits = get_unenriched_commits(conn, limit=limit)
+
     stats["commits_found"] = len(missing_commits)
 
     for item in missing_commits:
@@ -115,7 +134,15 @@ def enrich_unique_commits(conn, limit: int | None = None) -> dict:
         if not isinstance(commit, dict) or "error" in commit:
             stats["commits_failed"] += 1
             err = commit.get("error") if isinstance(commit, dict) else "Ukjent feil"
-            typer.echo(f"  Feil ved commit-henting for {repo_url}@{sha}: {err}")
+            skip_reason = commit.get("skip_reason") if isinstance(commit, dict) else None
+
+            if skip_reason == "repo_inaccessible":
+                typer.echo(f"  Skipper privat/utilgjengelig repo for {repo_url}@{sha}: {err}")
+            elif skip_reason == "commit_not_found":
+                typer.echo(f"  Skipper commit som ikke finnes for {repo_url}@{sha}: {err}")
+            else:
+                typer.echo(f"  Feil ved commit-henting for {repo_url}@{sha}: {err}")
+
             continue
 
         msg = commit.get("commit_message", "")
@@ -161,7 +188,6 @@ def enrich_unique_commits(conn, limit: int | None = None) -> dict:
         except Exception as e:
             typer.echo(f"  Patch-henting feilet for {repo_url}@{sha[:8]}: {e}")
 
-        # Hent og lagre kombinerte funksjoner
         try:
             combined_functions = vuln_and_patch_function(repo_url, sha)
             typer.echo(f"DEBUG: extracted {len(combined_functions)} functions")
@@ -185,8 +211,8 @@ def enrich_unique_commits(conn, limit: int | None = None) -> dict:
 
         except Exception as e:
             typer.echo(f"      funksjonshenting feilet: {e}")
-    return stats
 
+    return stats
 
 #--------------------------------------------
 # Kommando for ingest 
@@ -257,6 +283,7 @@ def ingest(
     skipped_errors = 0
     commit_total = 0
     patch_total = 0
+    processed_cve_ids: list[str] = []
 
     try:
         for idx, cve_data in enumerate(iter_cve_records_from_official_source(), start=1):
@@ -269,6 +296,7 @@ def ingest(
                     rejected += 1
                     continue
 
+                processed_cve_ids.append(saved_cve_id)
                 processed += 1
 
                 if processed % batch_size == 0:
@@ -281,7 +309,7 @@ def ingest(
 
         if not metadata_only:
             typer.echo("\nStarter enrich av unike commits...")
-            enrich_stats = enrich_unique_commits(conn)
+            enrich_stats = enrich_unique_commits(conn, cve_ids=processed_cve_ids)
             commit_total += enrich_stats["commits_saved"]
             patch_total += enrich_stats["patches_saved"]
 

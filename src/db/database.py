@@ -359,6 +359,47 @@ def get_unenriched_commits(
 #-----------------------------------------------------------------------
 # 
 #-----------------------------------------------------------------------
+def get_unenriched_commits_for_cves(
+    conn: sqlite3.Connection,
+    cve_ids: list[str],
+) -> list[dict]:
+    """
+    Henter unike commits som finnes i cve_commit for de oppgitte CVE-ene,
+    men som ikke finnes i commits-tabellen ennå.
+    """
+    if not cve_ids:
+        return []
+
+    placeholders = ",".join("?" for _ in cve_ids)
+
+    sql = f"""
+        SELECT DISTINCT
+            cc.repo_url,
+            cc.commit_sha,
+            cc.commit_url
+        FROM cve_commit cc
+        LEFT JOIN commits c
+            ON c.repo_url = cc.repo_url
+           AND c.sha = cc.commit_sha
+        WHERE c.sha IS NULL
+          AND cc.cve_id IN ({placeholders})
+        ORDER BY cc.repo_url, cc.commit_sha
+    """
+
+    rows = conn.execute(sql, tuple(cve_ids)).fetchall()
+
+    return [
+        {
+            "repo_url": row[0],
+            "commit_sha": row[1],
+            "commit_url": row[2],
+        }
+        for row in rows
+    ]
+
+#-----------------------------------------------------------------------
+# 
+#-----------------------------------------------------------------------
 def get_commits_for_cve(conn: sqlite3.Connection, cve_id: str) -> list[dict]:
     rows = conn.execute(
         """
