@@ -17,6 +17,7 @@ from .database import (
     get_sync_state,
     upsert_sync_state,
     get_unenriched_commits,
+    get_unenriched_commits_for_cves,
     get_functions_for_commit,
     get_function_overview,
 )
@@ -35,6 +36,7 @@ __all__ = [
     "get_sync_state",
     "upsert_sync_state",
     "get_unenriched_commits",
+    "get_unenriched_commits_for_cves",
     "get_functions_for_commit",
     "get_function_overview",
 ]
