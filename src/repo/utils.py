@@ -8,12 +8,16 @@ from __future__ import annotations
 import os
 import shutil
 import stat
+import subprocess
 import time
+
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 from pydriller import Repository
+
 
 #---------------------------------------------------------------------
 # Funksjon for å parse Github commit-referanser fra CVE-data
@@ -80,37 +84,124 @@ def _repo_dir_name(repo_url: str) -> str:
         return f"{parts[-2]}_{parts[-1]}"
     return parts[-1] if parts else "repo"
 
+@contextmanager
+def _non_interactive_git_env():
+    """
+    Hindrer git fra å åpne login prompt / credential popup.
+    Fungerer spesielt viktig på Windows.
+    """
+    old_env = os.environ.copy()
+
+    os.environ["GIT_TERMINAL_PROMPT"] = "0"
+    os.environ["GCM_INTERACTIVE"] = "Never"
+    os.environ["GIT_ASKPASS"] = "echo"
+
+    try:
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(old_env)
+
+def _repo_is_accessible(repo_url: str, timeout: int = 20) -> tuple[bool, str | None]:
+    """
+    Sjekker om repoet kan nås uten interaktiv autentisering.
+    Returnerer (True, None) hvis tilgjengelig,
+    ellers (False, feilmelding).
+    """
+    cmd = ["git", "ls-remote", repo_url, "HEAD"]
+
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GCM_INTERACTIVE"] = "Never"
+    env["GIT_ASKPASS"] = "echo"
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=env,
+        )
+
+        if result.returncode == 0:
+            return True, None
+
+        stderr = (result.stderr or "").strip()
+        stdout = (result.stdout or "").strip()
+        msg = stderr or stdout or "Ukjent git-feil"
+
+        lowered = msg.lower()
+
+        if any(x in lowered for x in [
+            "could not read username",
+            "authentication failed",
+            "repository not found",
+            "fatal: could not",
+            "terminal prompts disabled",
+            "support for password authentication was removed",
+        ]):
+            return False, f"Repo utilgjengelig eller privat: {msg}"
+
+        return False, f"Repo ikke tilgjengelig: {msg}"
+
+    except subprocess.TimeoutExpired:
+        return False, "Timeout ved tilgangssjekk mot repo"
+    except Exception as e:
+        return False, f"Feil ved repo-sjekk: {e}"
+
 
 def _load_single_commit(repo_url: str, commit_hash: str):
     """
     Traverserer nøyaktig én commit fra repoet.
+    Skipper repoer som krever autentisering eller er utilgjengelige.
     """
+    accessible, reason = _repo_is_accessible(repo_url)
+    if not accessible:
+        return {"error": reason, "skip_reason": "repo_inaccessible"}
+
     clone_root = Path("temp_repos")
     clone_root.mkdir(parents=True, exist_ok=True)
 
     repo_dir = clone_root / _repo_dir_name(repo_url)
     repo_dir.mkdir(parents=True, exist_ok=True)
 
-    repo = Repository(
-        repo_url,
-        clone_repo_to=str(repo_dir),
-        single=commit_hash,
-    )
+    try:
+        with _non_interactive_git_env():
+            repo = Repository(
+                repo_url,
+                clone_repo_to=str(repo_dir),
+                single=commit_hash,
+            )
 
-    for commit in repo.traverse_commits():
-        if commit.hash == commit_hash:
-            return commit
+            for commit in repo.traverse_commits():
+                if commit.hash == commit_hash:
+                    return commit
 
-    return None
+        return {"error": f"Commit {commit_hash} ikke funnet i {repo_url}", "skip_reason": "commit_not_found"}
+
+    except Exception as e:
+        msg = str(e)
+        lowered = msg.lower()
+
+        if any(x in lowered for x in [
+            "could not read username",
+            "authentication failed",
+            "repository not found",
+            "terminal prompts disabled",
+        ]):
+            return {"error": f"Privat/utilgjengelig repo: {msg}", "skip_reason": "repo_inaccessible"}
+
+        return {"error": f"Feil ved henting av {repo_url}@{commit_hash}: {msg}", "skip_reason": "commit_fetch_failed"}
 
 
 def fetch_commit_metadata(repo_url: str, commit_hash: str):
-    """
-    Henter kun metadata for en commit.
-    Dette er lettere enn å bygge full fil-/patch-struktur.
-    """
     try:
         commit = _load_single_commit(repo_url, commit_hash)
+
+        if isinstance(commit, dict) and "error" in commit:
+            return commit
+
         if not commit:
             return {"error": f"Commit {commit_hash} ikke funnet i {repo_url}"}
 
@@ -127,12 +218,12 @@ def fetch_commit_metadata(repo_url: str, commit_hash: str):
 
 
 def fetch_commit_bundle(repo_url: str, commit_hash: str):
-    """
-    Henter både commit metadata og endrede filer i én traversering.
-    Brukes for optimalisert run-all.
-    """
     try:
         commit = _load_single_commit(repo_url, commit_hash)
+
+        if isinstance(commit, dict) and "error" in commit:
+            return commit
+
         if not commit:
             return {"error": f"Commit {commit_hash} ikke funnet i {repo_url}"}
 
