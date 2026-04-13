@@ -1,13 +1,15 @@
-#--------------------------------------------------------------
+# --------------------------------------------------------------
 # IMPORTS: impoterer biblitekene som trengs for DB-hånteringen
-#---------------------------------------------------------------
-from __future__ import annotations 
+# ---------------------------------------------------------------
+from __future__ import annotations
+
 import sqlite3
 from pathlib import Path
 
-#-----------------
-# Database schema  
-#-----------------
+
+# -----------------
+# Database schema
+# -----------------
 SCHEMA_SQL = """
 PRAGMA foreign_keys = ON;
 
@@ -63,20 +65,20 @@ CREATE TABLE IF NOT EXISTS patch (
 );
 
 CREATE TABLE IF NOT EXISTS functions (
-  function_id     INTEGER PRIMARY KEY AUTOINCREMENT,  -- Unik ID for function-raden
-  repo_url        TEXT NOT NULL,                      -- Hvilket repository funksjonen tilhører
-  commit_sha      TEXT NOT NULL,                      -- Commit-hash funksjonen er knyttet til
-  file_path       TEXT,                               -- Hvilken fil funksjonen ligger i
-  method_name     TEXT,                               -- Navnet på metoden funksjonen hører til
-  patched_start_line      INTEGER,                            
-  patched_end_line        INTEGER,
-  vuln_start_line         INTEGER,
-  vuln_end_line           INTEGER,
-  vuln_function   TEXT,                               -- Funksjonen som inneholder sårbarheten
-  patch_function  TEXT,                               -- Funksjonen der patchen er gjort
+  function_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+  repo_url        TEXT NOT NULL,
+  commit_sha      TEXT NOT NULL,
+  file_path       TEXT,
+  method_name     TEXT,
+  patched_start_line INTEGER,
+  patched_end_line   INTEGER,
+  vuln_start_line    INTEGER,
+  vuln_end_line      INTEGER,
+  vuln_function   TEXT,
+  patch_function  TEXT,
   FOREIGN KEY (repo_url, commit_sha)
     REFERENCES commits(repo_url, sha)
-    ON DELETE CASCADE  -- Hvis commit slettes, slettes tilhørende function-rader
+    ON DELETE CASCADE
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_patch_commit_file
@@ -100,31 +102,37 @@ ON commits(commit_date);
 CREATE INDEX IF NOT EXISTS idx_patch_repo_sha
 ON patch(repo_url, commit_sha);
 
-CREATE INDEX IF NOT EXISTS idx_functions_repo_sha 
+CREATE INDEX IF NOT EXISTS idx_functions_repo_sha
 ON functions(repo_url, commit_sha);
 """
 
-#-----------------------------------
+
+# -----------------------------------
 # Funksjon for å koble til database
-#-----------------------------------
+# -----------------------------------
 def connect(db_path: str | Path) -> sqlite3.Connection:
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
     conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA foreign_keys = ON;")
+    conn.execute("PRAGMA journal_mode = WAL;")
+    conn.execute("PRAGMA synchronous = NORMAL;")
+    conn.execute("PRAGMA temp_store = MEMORY;")
     return conn
 
-#-------------------------------------------------
+
+# -------------------------------------------------
 # Funksjon for å initialisere database med schema
-#-------------------------------------------------
+# -------------------------------------------------
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_SQL)
     conn.commit()
 
-#---------------------------------------------------
+
+# ---------------------------------------------------
 # Funksjon for å oppdatere eller sette inn CVE-data
-#---------------------------------------------------
+# ---------------------------------------------------
 def upsert_cve(
     conn: sqlite3.Connection,
     cve_id: str,
@@ -151,11 +159,11 @@ def upsert_cve(
         """,
         (cve_id, title, published, severity, cvss_score, cwe, state),
     )
-    conn.commit()
 
-#------------------------------------------------------
+
+# ------------------------------------------------------
 # Funksjon for å oppdatere eller sette inn commit data
-#------------------------------------------------------
+# ------------------------------------------------------
 def upsert_commit(
     conn: sqlite3.Connection,
     repo_url: str,
@@ -181,11 +189,11 @@ def upsert_commit(
         """,
         (repo_url, sha, commit_url, message, commit_date, author, authored_date),
     )
-    conn.commit()
 
-#--------------------------------------------------------------------------------
+
+# --------------------------------------------------------------------------------
 # Funksjon for å oppdatere eller sette inn kobling mellom CVE-records til commits
-#--------------------------------------------------------------------------------
+# --------------------------------------------------------------------------------
 def link_cve_commit(
     conn: sqlite3.Connection,
     cve_id: str,
@@ -208,11 +216,11 @@ def link_cve_commit(
         """,
         (cve_id, repo_url, commit_sha, commit_url, method, confidence),
     )
-    conn.commit()
 
-#-----------------------------------------------------
+
+# -----------------------------------------------------
 # Funksjon for å oppdatere eller sette inn patch-data
-#-----------------------------------------------------
+# -----------------------------------------------------
 def insert_patch(
     conn: sqlite3.Connection,
     repo_url: str,
@@ -263,35 +271,33 @@ def insert_patch(
             after_code,
         ),
     )
-    conn.commit()
+
 
 # ---------------------------------------------
-# Funksjon: Legger inn en funskjonsrad i DB
+# Funksjon: Legger inn en funksjonsrad i DB
 # ---------------------------------------------
 def insert_function(
     conn: sqlite3.Connection,
     *,
     repo_url: str,
     commit_sha: str,
-    file_path: Optional[str] = None,
-    method_name: Optional[str] = None,
-    patched_start_line: Optional[int] = None,
-    patched_end_line: Optional[int] = None,
-    vuln_start_line: Optional[int] = None,
-    vuln_end_line: Optional[int] = None,
-    vuln_function: Optional[str] = None,
-    patch_function: Optional[str] = None,
+    file_path: str | None = None,
+    method_name: str | None = None,
+    patched_start_line: int | None = None,
+    patched_end_line: int | None = None,
+    vuln_start_line: int | None = None,
+    vuln_end_line: int | None = None,
+    vuln_function: str | None = None,
+    patch_function: str | None = None,
 ) -> int:
-   
-#Legger inn en function-rad knyttet til en commit.
     if not repo_url:
         raise ValueError("repo_url must be provided for function rows (FK to commits).")
 
     cur = conn.execute(
         """
         INSERT INTO functions(
-          repo_url, commit_sha, file_path, method_name, patched_start_line, patched_end_line, vuln_start_line, vuln_end_line, 
-          vuln_function, patch_function
+          repo_url, commit_sha, file_path, method_name, patched_start_line, patched_end_line,
+          vuln_start_line, vuln_end_line, vuln_function, patch_function
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
@@ -308,17 +314,18 @@ def insert_function(
             patch_function,
         ),
     )
-    conn.commit()
-    return int(cur.lastrowid)    
+    return int(cur.lastrowid)
 
-#-----------------------------------------------------------------------
-# 
-#-----------------------------------------------------------------------
+
+# -----------------------------------------------------------------------
+#
+# -----------------------------------------------------------------------
 def get_connection(db_path: str | Path) -> sqlite3.Connection:
     """
     Valgfri helper hvis resten av prosjektet ditt bruker get_connection().
     """
     return connect(db_path)
+
 
 def get_unenriched_commits(
     conn: sqlite3.Connection,
@@ -356,9 +363,10 @@ def get_unenriched_commits(
         for row in rows
     ]
 
-#-----------------------------------------------------------------------
-# 
-#-----------------------------------------------------------------------
+
+# -----------------------------------------------------------------------
+#
+# -----------------------------------------------------------------------
 def get_unenriched_commits_for_cves(
     conn: sqlite3.Connection,
     cve_ids: list[str],
@@ -366,6 +374,9 @@ def get_unenriched_commits_for_cves(
     """
     Henter unike commits som finnes i cve_commit for de oppgitte CVE-ene,
     men som ikke finnes i commits-tabellen ennå.
+
+    Denne brukes ikke i full-run-hovedløpet, men kan beholdes for mindre,
+    målrettede kjøringer.
     """
     if not cve_ids:
         return []
@@ -397,9 +408,10 @@ def get_unenriched_commits_for_cves(
         for row in rows
     ]
 
-#-----------------------------------------------------------------------
-# 
-#-----------------------------------------------------------------------
+
+# -----------------------------------------------------------------------
+#
+# -----------------------------------------------------------------------
 def get_commits_for_cve(conn: sqlite3.Connection, cve_id: str) -> list[dict]:
     rows = conn.execute(
         """
@@ -438,9 +450,10 @@ def get_commits_for_cve(conn: sqlite3.Connection, cve_id: str) -> list[dict]:
         for row in rows
     ]
 
-#-----------------------------------------------------------------------
-# 
-#-----------------------------------------------------------------------
+
+# -----------------------------------------------------------------------
+#
+# -----------------------------------------------------------------------
 def get_patches_for_commit(
     conn: sqlite3.Connection,
     repo_url: str,
@@ -484,15 +497,14 @@ def get_patches_for_commit(
         for row in rows
     ]
 
+
 # -------------------------------------------------------------------------
-# Funksjon: som henter alle funskjoner som er lagret for en bestemt commit
+# Funksjon: som henter alle funksjoner som er lagret for en bestemt commit
 # --------------------------------------------------------------------------
 def get_functions_for_commit(conn: sqlite3.Connection, repo_url: str, commit_sha: str):
-    
-# Henter function-rader for en commit.
     return conn.execute(
         """
-        SELECT 
+        SELECT
         file_path,
         method_name,
         patched_start_line,
@@ -503,17 +515,16 @@ def get_functions_for_commit(conn: sqlite3.Connection, repo_url: str, commit_sha
         patch_function
         FROM functions
         WHERE repo_url = ? AND commit_sha = ?
-        ORDER BY file_path, method_name 
+        ORDER BY file_path, method_name
         """,
         (repo_url, commit_sha),
     ).fetchall()
-    
-#----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 # Funksjon: som henter en enkel oversikt over lagrende funksjoner sammen med commit-info
-#------------------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------------------
 def get_function_overview(conn: sqlite3.Connection):
-    
-# Henter oversikt med commit-melding, SHA, vuln_function og patch_function.
     return conn.execute(
         """
         SELECT
@@ -526,11 +537,12 @@ def get_function_overview(conn: sqlite3.Connection):
           ON c.repo_url = f.repo_url
          AND c.sha = f.commit_sha
         """
-    ).fetchall()    
+    ).fetchall()
 
-#-----------------------------------------------------------------------
-# 
-#-----------------------------------------------------------------------
+
+# -----------------------------------------------------------------------
+#
+# -----------------------------------------------------------------------
 def get_sync_state(conn: sqlite3.Connection, source_name: str) -> dict | None:
     conn.execute(
         """
@@ -560,9 +572,10 @@ def get_sync_state(conn: sqlite3.Connection, source_name: str) -> dict | None:
         "synced_at": row[2],
     }
 
-#-----------------------------------------------------------------------
-# 
-#-----------------------------------------------------------------------
+
+# -----------------------------------------------------------------------
+#
+# -----------------------------------------------------------------------
 def upsert_sync_state(
     conn: sqlite3.Connection,
     source_name: str,
@@ -588,5 +601,4 @@ def upsert_sync_state(
             synced_at = excluded.synced_at
         """,
         (source_name, release_tag, synced_at),
-    )   
-    conn.commit() 
+    )
