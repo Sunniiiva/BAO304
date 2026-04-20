@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -13,12 +15,8 @@ from src.cve import (
 )
 
 from src.cve.source import get_latest_release_info, iter_cve_records_from_official_source
-from src.functions import vuln_and_patch_function
-
 from src.db import (
     connect,
-    get_commits_for_cve,
-    get_patches_for_commit,
     get_sync_state,
     get_unenriched_commits,
     init_db,
@@ -28,21 +26,19 @@ from src.db import (
     upsert_commit,
     upsert_cve,
     upsert_sync_state,
-    get_functions_for_commit,
 )
 
 from src.patch.fetch_patch import build_patch_data_from_modified_files
 from src.repo import extract_commit_references
-from src.repo.utils import cleanup_all_temp_repos, fetch_commit_data
+
+from src.repo.utils import (
+    cleanup_all_temp_repos,
+    load_single_commit,
+)
 
 app = typer.Typer(help="CVE -> commit -> patch pipeline")
 
 DEFAULT_DB_PATH = Path("data/processed/cve_commits.db")
-
-
-def get_db_path() -> Path:
-    return DEFAULT_DB_PATH
-
 
 # -----------------------------------------------------------------------
 # Funksjon for å prosessere én CVE og lagre metadata + commit-referanser
@@ -91,17 +87,124 @@ def process_single_cve_metadata(conn, cve_data: dict) -> str | None:
 
 
 # --------------------------------------------
+# Funksjon for å enrich-e én commit (kjøres i egen tråd)
+# ---------------------------------------------
+def _enrich_one_commit(item: dict, db_path: Path, stats: dict, stats_lock: threading.Lock) -> None:
+    """
+    Henter, parser og lagrer én commit med tilhørende patcher og funksjoner.
+    Åpner egen DB-tilkobling per tråd — SQLite-tilkoblinger kan ikke deles på tvers av tråder.
+    """
+    repo_url = item["repo_url"]
+    sha = item["commit_sha"]
+    commit_url = item.get("commit_url")
+
+    conn = connect(db_path)
+    conn.execute("PRAGMA busy_timeout = 5000;")
+
+    try:
+        commit = load_single_commit(repo_url, sha)
+
+        if "error" in commit:
+            err = commit.get("error", "Ukjent feil")
+            skip_reason = commit.get("skip_reason")
+            if skip_reason == "repo_inaccessible":
+                typer.echo(f"  [{sha[:8]}] Skipper privat/utilgjengelig repo: {err}")
+            elif skip_reason == "commit_not_found":
+                typer.echo(f"  [{sha[:8]}] Skipper commit som ikke finnes: {err}")
+            else:
+                typer.echo(f"  [{sha[:8]}] Feil ved commit-henting: {err}")
+            with stats_lock:
+                stats["commits_failed"] += 1
+            return
+
+        msg = commit.get("commit_message", "")
+        author = commit.get("author", "")
+        date = commit.get("date", "")
+        modified_files = commit.get("modified_files", [])
+
+        upsert_commit(
+            conn,
+            repo_url=repo_url,
+            sha=sha,
+            commit_url=commit_url,
+            message=msg,
+            commit_date=date,
+            author=author,
+            authored_date=None,
+        )
+
+        patches_saved = 0
+        try:
+            patch_list = build_patch_data_from_modified_files(
+                repo_url=repo_url,
+                commit_sha=sha,
+                modified_files=modified_files,
+            )
+            for patch in patch_list:
+                insert_patch(
+                    conn,
+                    repo_url=repo_url,
+                    commit_sha=sha,
+                    file_path=patch["file_path"],
+                    language=patch.get("language"),
+                    added_lines=patch.get("added_lines"),
+                    removed_lines=patch.get("removed_lines"),
+                    hunk_count=patch.get("hunk_count"),
+                    diff_text=patch.get("diff_text"),
+                    before_code=patch.get("before_code"),
+                    after_code=patch.get("after_code"),
+                )
+                patches_saved += 1
+        except Exception as e:
+            typer.echo(f"  [{sha[:8]}] Patch-henting feilet: {e}")
+
+        try:
+            combined_functions = commit.get("functions", [])
+            for fn in combined_functions:
+                insert_function(
+                    conn,
+                    repo_url=repo_url,
+                    commit_sha=sha,
+                    file_path=fn["file_path"],
+                    method_name=fn["method_name"],
+                    patched_start_line=fn["patched_start_line"],
+                    patched_end_line=fn["patched_end_line"],
+                    vuln_start_line=fn["vuln_start_line"],
+                    vuln_end_line=fn["vuln_end_line"],
+                    vuln_function=fn["vuln_function"],
+                    patch_function=fn["patch_function"],
+                )
+            typer.echo(f"  [{sha[:8]}] {len(combined_functions)} funksjon(er), {patches_saved} patch(er) lagret")
+        except Exception as e:
+            typer.echo(f"  [{sha[:8]}] Funksjonshenting feilet: {e}")
+
+        conn.commit()
+
+        with stats_lock:
+            stats["commits_saved"] += 1
+            stats["patches_saved"] += patches_saved
+
+    except Exception as e:
+        conn.rollback()
+        typer.echo(f"  [{sha[:8]}] DB/transaksjonsfeil: {e}")
+        with stats_lock:
+            stats["commits_failed"] += 1
+    finally:
+        conn.close()
+
+
+# --------------------------------------------
 # Funksjon for å enrich-e unike commits med PyDriller
 # ---------------------------------------------
 def enrich_unique_commits(
     conn,
+    db_path: Path,
     limit: int | None = None,
+    workers: int = 6,
 ) -> dict:
     """
-    Henter unike commits som finnes i cve_commit, men ikke i commits,
-    og enrich-er dem med commitdata, patcher og funksjoner.
-
-    Committer én gang per ferdig behandlet commit for bedre ytelse.
+    Enricher commits parallelt med ThreadPoolExecutor.
+    Hver tråd åpner sin egen DB-tilkobling for å unngå konflikter.
     """
     stats = {
         "commits_found": 0,
@@ -109,102 +212,29 @@ def enrich_unique_commits(
         "patches_saved": 0,
         "commits_failed": 0,
     }
+    stats_lock = threading.Lock()
 
     missing_commits = get_unenriched_commits(conn, limit=limit)
     stats["commits_found"] = len(missing_commits)
 
-    for item in missing_commits:
-        repo_url = item["repo_url"]
-        sha = item["commit_sha"]
-        commit_url = item.get("commit_url")
+    if not missing_commits:
+        return stats
 
-        try:
-            commit = fetch_commit_data(repo_url, sha)
-            if not isinstance(commit, dict) or "error" in commit:
-                stats["commits_failed"] += 1
-                err = commit.get("error") if isinstance(commit, dict) else "Ukjent feil"
-                skip_reason = commit.get("skip_reason") if isinstance(commit, dict) else None
+    typer.echo(f"Starter parallell enrich med {workers} workers ({len(missing_commits)} commits)...")
 
-                if skip_reason == "repo_inaccessible":
-                    typer.echo(f"  Skipper privat/utilgjengelig repo for {repo_url}@{sha}: {err}")
-                elif skip_reason == "commit_not_found":
-                    typer.echo(f"  Skipper commit som ikke finnes for {repo_url}@{sha}: {err}")
-                else:
-                    typer.echo(f"  Feil ved commit-henting for {repo_url}@{sha}: {err}")
-                continue
-
-            msg = commit.get("commit_message", "")
-            author = commit.get("author", "")
-            date = commit.get("date", "")
-            modified_files = commit.get("modified_files", [])
-
-            upsert_commit(
-                conn,
-                repo_url=repo_url,
-                sha=sha,
-                commit_url=commit_url,
-                message=msg,
-                commit_date=date,
-                author=author,
-                authored_date=None,
-            )
-            stats["commits_saved"] += 1
-
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(_enrich_one_commit, item, db_path, stats, stats_lock): item
+            for item in missing_commits
+        }
+        for future in as_completed(futures):
             try:
-                patch_list = build_patch_data_from_modified_files(
-                    repo_url=repo_url,
-                    commit_sha=sha,
-                    modified_files=modified_files,
-                )
-
-                for patch in patch_list:
-                    insert_patch(
-                        conn,
-                        repo_url=repo_url,
-                        commit_sha=sha,
-                        file_path=patch["file_path"],
-                        language=patch.get("language"),
-                        added_lines=patch.get("added_lines"),
-                        removed_lines=patch.get("removed_lines"),
-                        hunk_count=patch.get("hunk_count"),
-                        diff_text=patch.get("diff_text"),
-                        before_code=patch.get("before_code"),
-                        after_code=patch.get("after_code"),
-                    )
-                    stats["patches_saved"] += 1
-
+                future.result()
             except Exception as e:
-                typer.echo(f"  Patch-henting feilet for {repo_url}@{sha[:8]}: {e}")
-
-            try:
-                combined_functions = vuln_and_patch_function(repo_url, sha)
-
-                for fn in combined_functions:
-                    insert_function(
-                        conn,
-                        repo_url=repo_url,
-                        commit_sha=sha,
-                        file_path=fn["file_path"],
-                        method_name=fn["method_name"],
-                        patched_start_line=fn["patched_start_line"],
-                        patched_end_line=fn["patched_end_line"],
-                        vuln_start_line=fn["vuln_start_line"],
-                        vuln_end_line=fn["vuln_end_line"],
-                        vuln_function=fn["vuln_function"],
-                        patch_function=fn["patch_function"],
-                    )
-
-                typer.echo(f"      {len(combined_functions)} funksjon(er) lagret")
-
-            except Exception as e:
-                typer.echo(f"      funksjonshenting feilet: {e}")
-
-            conn.commit()
-
-        except Exception as e:
-            conn.rollback()
-            stats["commits_failed"] += 1
-            typer.echo(f"  DB/transaksjonsfeil for {repo_url}@{sha[:8]}: {e}")
+                item = futures[future]
+                typer.echo(f"  [{item['commit_sha'][:8]}] Uventet feil i worker: {e}")
+                with stats_lock:
+                    stats["commits_failed"] += 1
 
     return stats
 
@@ -239,6 +269,11 @@ def ingest(
         "--force",
         help="Kjør selv om release_tag allerede er synket",
     ),
+    workers: int = typer.Option(
+        6,
+        "--workers",
+        help="Antall parallelle workers for commit-enrich (anbefalt: 4-8)",
+    ),
 ) -> None:
     """
     Leser CVE-er fra kilde, lagrer CVE-data og commit-referanser,
@@ -250,7 +285,7 @@ def ingest(
     if not full and not metadata_only:
         metadata_only = True
 
-    db_path = get_db_path()
+    db_path = DEFAULT_DB_PATH
     conn = connect(db_path)
     init_db(conn)
 
@@ -305,7 +340,7 @@ def ingest(
 
         if not metadata_only:
             typer.echo("\nStarter enrich av unike commits...")
-            enrich_stats = enrich_unique_commits(conn)
+            enrich_stats = enrich_unique_commits(conn, db_path=db_path, workers=workers)
             commit_total += enrich_stats["commits_saved"]
             patch_total += enrich_stats["patches_saved"]
 
@@ -350,16 +385,21 @@ def enrich_commits(
         "--limit",
         help="Maks antall unike commits å enrich-e",
     ),
+    workers: int = typer.Option(
+        6,
+        "--workers",
+        help="Antall parallelle workers for commit-enrich (anbefalt: 4-8)",
+    ),
 ) -> None:
     """
     Enricher commits som finnes i cve_commit, men som ikke finnes i commits ennå.
     """
-    db_path = get_db_path()
+    db_path = DEFAULT_DB_PATH
     conn = connect(db_path)
     init_db(conn)
 
     try:
-        stats = enrich_unique_commits(conn, limit=limit)
+        stats = enrich_unique_commits(conn, db_path=db_path, limit=limit, workers=workers)
         typer.echo("Commit enrich fullført!")
         typer.echo(f"Unike commits funnet: {stats['commits_found']}")
         typer.echo(f"Commits lagret: {stats['commits_saved']}")
