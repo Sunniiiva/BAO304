@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from src.repo.utils import fetch_commit_modified_files
 from src.patch.parse_patch import parse_patch
 from src.patch.language_detection import detect_language_from_path
 from src.patch.file_filter import should_skip_file
@@ -44,13 +43,3 @@ def build_patch_data_from_modified_files(
         )
 
     return patch_data
-
-#-------------------------------------------------------------
-# Hovedfunksjon for å hente og parse patch-data for en commit
-#-------------------------------------------------------------
-def fetch_patch_data(repo_url: str, commit_sha: str) -> list[dict]:
-    """
-    Fetch and parse patch data for all modified files in a commit.
-    """
-    modified_files = fetch_commit_modified_files(repo_url, commit_sha)
-    return build_patch_data_from_modified_files(repo_url, commit_sha, modified_files)

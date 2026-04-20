@@ -81,6 +81,12 @@ CREATE TABLE IF NOT EXISTS functions (
     ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS sync_state (
+    source_name TEXT PRIMARY KEY,
+    release_tag TEXT,
+    synced_at TEXT
+);
+
 CREATE UNIQUE INDEX IF NOT EXISTS uq_patch_commit_file
 ON patch(repo_url, commit_sha, file_path);
 
@@ -320,13 +326,6 @@ def insert_function(
 # -----------------------------------------------------------------------
 #
 # -----------------------------------------------------------------------
-def get_connection(db_path: str | Path) -> sqlite3.Connection:
-    """
-    Valgfri helper hvis resten av prosjektet ditt bruker get_connection().
-    """
-    return connect(db_path)
-
-
 def get_unenriched_commits(
     conn: sqlite3.Connection,
     limit: int | None = None,
@@ -363,196 +362,10 @@ def get_unenriched_commits(
         for row in rows
     ]
 
-
-# -----------------------------------------------------------------------
-#
-# -----------------------------------------------------------------------
-def get_unenriched_commits_for_cves(
-    conn: sqlite3.Connection,
-    cve_ids: list[str],
-) -> list[dict]:
-    """
-    Henter unike commits som finnes i cve_commit for de oppgitte CVE-ene,
-    men som ikke finnes i commits-tabellen ennå.
-
-    Denne brukes ikke i full-run-hovedløpet, men kan beholdes for mindre,
-    målrettede kjøringer.
-    """
-    if not cve_ids:
-        return []
-
-    placeholders = ",".join("?" for _ in cve_ids)
-
-    sql = f"""
-        SELECT DISTINCT
-            cc.repo_url,
-            cc.commit_sha,
-            cc.commit_url
-        FROM cve_commit cc
-        LEFT JOIN commits c
-            ON c.repo_url = cc.repo_url
-           AND c.sha = cc.commit_sha
-        WHERE c.sha IS NULL
-          AND cc.cve_id IN ({placeholders})
-        ORDER BY cc.repo_url, cc.commit_sha
-    """
-
-    rows = conn.execute(sql, tuple(cve_ids)).fetchall()
-
-    return [
-        {
-            "repo_url": row[0],
-            "commit_sha": row[1],
-            "commit_url": row[2],
-        }
-        for row in rows
-    ]
-
-
-# -----------------------------------------------------------------------
-#
-# -----------------------------------------------------------------------
-def get_commits_for_cve(conn: sqlite3.Connection, cve_id: str) -> list[dict]:
-    rows = conn.execute(
-        """
-        SELECT
-            cc.cve_id,
-            cc.repo_url,
-            cc.commit_sha,
-            cc.commit_url,
-            cc.method,
-            cc.confidence,
-            c.commit_date,
-            c.message,
-            c.author
-        FROM cve_commit cc
-        LEFT JOIN commits c
-            ON c.repo_url = cc.repo_url
-           AND c.sha = cc.commit_sha
-        WHERE cc.cve_id = ?
-        ORDER BY cc.repo_url, cc.commit_sha
-        """,
-        (cve_id,),
-    ).fetchall()
-
-    return [
-        {
-            "cve_id": row[0],
-            "repo_url": row[1],
-            "commit_sha": row[2],
-            "commit_url": row[3],
-            "method": row[4],
-            "confidence": row[5],
-            "commit_date": row[6],
-            "message": row[7],
-            "author": row[8],
-        }
-        for row in rows
-    ]
-
-
-# -----------------------------------------------------------------------
-#
-# -----------------------------------------------------------------------
-def get_patches_for_commit(
-    conn: sqlite3.Connection,
-    repo_url: str,
-    commit_sha: str,
-) -> list[dict]:
-    rows = conn.execute(
-        """
-        SELECT
-            patch_id,
-            repo_url,
-            commit_sha,
-            file_path,
-            language,
-            added_lines,
-            removed_lines,
-            hunk_count,
-            diff_text,
-            before_code,
-            after_code
-        FROM patch
-        WHERE repo_url = ? AND commit_sha = ?
-        ORDER BY file_path
-        """,
-        (repo_url, commit_sha),
-    ).fetchall()
-
-    return [
-        {
-            "patch_id": row[0],
-            "repo_url": row[1],
-            "commit_sha": row[2],
-            "file_path": row[3],
-            "language": row[4],
-            "added_lines": row[5],
-            "removed_lines": row[6],
-            "hunk_count": row[7],
-            "diff_text": row[8],
-            "before_code": row[9],
-            "after_code": row[10],
-        }
-        for row in rows
-    ]
-
-
-# -------------------------------------------------------------------------
-# Funksjon: som henter alle funksjoner som er lagret for en bestemt commit
-# --------------------------------------------------------------------------
-def get_functions_for_commit(conn: sqlite3.Connection, repo_url: str, commit_sha: str):
-    return conn.execute(
-        """
-        SELECT
-        file_path,
-        method_name,
-        patched_start_line,
-        patched_end_line,
-        vuln_start_line,
-        vuln_end_line,
-        vuln_function,
-        patch_function
-        FROM functions
-        WHERE repo_url = ? AND commit_sha = ?
-        ORDER BY file_path, method_name
-        """,
-        (repo_url, commit_sha),
-    ).fetchall()
-
-
-# ----------------------------------------------------------------------------------------
-# Funksjon: som henter en enkel oversikt over lagrende funksjoner sammen med commit-info
-# ------------------------------------------------------------------------------------------
-def get_function_overview(conn: sqlite3.Connection):
-    return conn.execute(
-        """
-        SELECT
-          c.message AS commit,
-          f.commit_sha AS sha,
-          f.vuln_function,
-          f.patch_function
-        FROM functions f
-        JOIN commits c
-          ON c.repo_url = f.repo_url
-         AND c.sha = f.commit_sha
-        """
-    ).fetchall()
-
-
 # -----------------------------------------------------------------------
 #
 # -----------------------------------------------------------------------
 def get_sync_state(conn: sqlite3.Connection, source_name: str) -> dict | None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS sync_state (
-            source_name TEXT PRIMARY KEY,
-            release_tag TEXT,
-            synced_at TEXT
-        )
-        """
-    )
 
     row = conn.execute(
         """
@@ -582,15 +395,6 @@ def upsert_sync_state(
     release_tag: str,
     synced_at: str,
 ) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS sync_state (
-            source_name TEXT PRIMARY KEY,
-            release_tag TEXT,
-            synced_at TEXT
-        )
-        """
-    )
 
     conn.execute(
         """

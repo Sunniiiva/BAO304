@@ -36,7 +36,7 @@ def parse_patch(patch_text: str | None) -> dict[str, Any]:
                 hunk_count += 1
             continue
 
-        # only changed lines (needs the whole function of the patch for context, with pydriller to get list of modified functions, not with +++)
+        # only changed lines
         if line.startswith("+") and not line.startswith("+++"):
             added += 1
             content = line[1:]
