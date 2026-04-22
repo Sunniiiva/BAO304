@@ -123,6 +123,7 @@ def ingest():
                 repo_url=commit.get('repo_url')
             )
 
+<<<<<<< Updated upstream
             # Lagre kobling CVE ↔ commit
             link_cve_commit(
                 conn,
@@ -132,6 +133,29 @@ def ingest():
                 method="message_regex",
                 confidence=1.0 if commit.get("mentions_target_cve") else 0.5,
             )
+=======
+        try:
+            combined_functions = commit.get("functions", [])
+            for fn in combined_functions:
+                if fn.get("vuln_function") is None or fn.get("patch_function") is None:
+                    continue
+                insert_function(
+                    conn,
+                    repo_url=repo_url,
+                    commit_sha=sha,
+                    file_path=fn["file_path"],
+                    method_name=fn["method_name"],
+                    patched_start_line=fn["patched_start_line"],
+                    patched_end_line=fn["patched_end_line"],
+                    vuln_start_line=fn["vuln_start_line"],
+                    vuln_end_line=fn["vuln_end_line"],
+                    vuln_function=fn["vuln_function"],
+                    patch_function=fn["patch_function"],
+                )
+            typer.echo(f"  [{sha[:8]}] {len(combined_functions)} funksjon(er), {patches_saved} patch(er) lagret")
+        except Exception as e:
+            typer.echo(f"  [{sha[:8]}] Funksjonshenting feilet: {e}")
+>>>>>>> Stashed changes
 
             typer.echo(f"    Commit {sha[:8]} lagret")
 
