@@ -130,7 +130,6 @@ def _enrich_one_commit(item: dict, db_path: Path, stats: dict, stats_lock: threa
             message=msg,
             commit_date=date,
             author=author,
-            authored_date=None,
         )
 
         patches_saved = 0
