@@ -23,4 +23,4 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [project.scripts]
-bao304 = "src.main:app"
+bao304 = "main:app"
