@@ -30,4 +30,3 @@ __all__ = [
     "upsert_sync_state",
     "get_unenriched_commits",
 ]
-
