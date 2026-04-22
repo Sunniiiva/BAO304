@@ -43,7 +43,6 @@ CREATE TABLE IF NOT EXISTS commits (
     commit_date TEXT,
     message TEXT,
     author TEXT,
-    authored_date TEXT,
     PRIMARY KEY (repo_url, sha)
 );
 
@@ -178,22 +177,20 @@ def upsert_commit(
     message: str | None = None,
     commit_date: str | None = None,
     author: str | None = None,
-    authored_date: str | None = None,
 ) -> None:
     conn.execute(
         """
         INSERT INTO commits (
-            repo_url, sha, commit_url, message, commit_date, author, authored_date
+            repo_url, sha, commit_url, message, commit_date, author
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(repo_url, sha) DO UPDATE SET
             commit_url = COALESCE(excluded.commit_url, commits.commit_url),
             message = COALESCE(excluded.message, commits.message),
             commit_date = COALESCE(excluded.commit_date, commits.commit_date),
-            author = COALESCE(excluded.author, commits.author),
-            authored_date = COALESCE(excluded.authored_date, commits.authored_date)
+            author = COALESCE(excluded.author, commits.author)
         """,
-        (repo_url, sha, commit_url, message, commit_date, author, authored_date),
+        (repo_url, sha, commit_url, message, commit_date, author),
     )
 
 
