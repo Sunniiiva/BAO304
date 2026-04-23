@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from src.repo.utils import extract_repo_and_hash
+from src.utils.parse_url import extract_repo_and_hash
 from src.cve.parse_cve import extract_grouped_references
 
 #---------------------------------------------------------
