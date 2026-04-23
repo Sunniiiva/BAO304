@@ -128,7 +128,6 @@ def _enrich_one_commit(item: dict, db_path: Path, stats: dict, stats_lock: threa
             message=msg,
             commit_date=date,
             author=author,
-            authored_date=None,
         )
 
         patches_saved = 0
@@ -159,6 +158,8 @@ def _enrich_one_commit(item: dict, db_path: Path, stats: dict, stats_lock: threa
         try:
             combined_functions = commit.get("functions", [])
             for fn in combined_functions:
+                if fn.get("vuln_function") is None or fn.get("patch_function") is None:
+                    continue
                 insert_function(
                     conn,
                     repo_url=repo_url,
