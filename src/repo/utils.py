@@ -2,12 +2,13 @@
 # Generelle hjelpefunksjoner for parsing av CVE-er, commits og patcher.
 #---------------------------------------------------------------------
 
-#Imports 
+# Imports
 from __future__ import annotations
 
 import gc
 import hashlib
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -19,6 +20,8 @@ from pathlib import Path
 from typing import Any
 
 from pydriller import Repository
+
+from src.patch.file_filter import should_skip_file
 
 # Cache for repo-tilgjengelighet så vi slipper å kjøre git ls-remote
 # for samme repo tusenvis av ganger i samme kjøring.
@@ -87,6 +90,7 @@ def _repo_dir_name(repo_url: str, commit_hash: str) -> str:
     key = f"{repo_url}#{commit_hash}"
     return hashlib.sha256(key.encode()).hexdigest()[:16]
 
+
 @contextmanager
 def _non_interactive_git_env():
     """
@@ -104,6 +108,7 @@ def _non_interactive_git_env():
     finally:
         os.environ.clear()
         os.environ.update(old_env)
+
 
 def _inject_token(repo_url: str) -> str:
     """
@@ -168,6 +173,7 @@ def _repo_is_accessible(repo_url: str, timeout: int = 20) -> tuple[bool, str | N
     except Exception as e:
         return False, f"Feil ved repo-sjekk: {e}"
 
+
 def get_cached_repo_access(repo_url: str, timeout: int = 20) -> tuple[bool, str | None]:
     """
     Returnerer cached resultat for repo-tilgjengelighet hvis tilgjengelig.
@@ -192,6 +198,176 @@ def clear_repo_access_cache() -> None:
     """
     _REPO_ACCESS_CACHE.clear()
 
+
+def _is_valid_method_name(name: str | None) -> bool:
+    if not name:
+        return False
+
+    name = name.strip()
+    if not name:
+        return False
+
+    lowered = name.lower()
+    if lowered in {"(anonymous)", "anonymous", "<anonymous>", "unknown"}:
+        return False
+
+    # Krev minst to sammenhengende bokstaver — filtrerer bort
+    # operatorer og parser-artefakter som "+", ";", "=", "(", "&&"
+    if not re.search(r"[a-zA-Z]{2}", name):
+        return False
+
+    return True
+
+
+def _valid_line_range(start: int | None, end: int | None) -> bool:
+    if start is None or end is None:
+        return False
+    return start > 0 and end >= start
+
+
+def _extract_code_block(source: str | None, start: int | None, end: int | None) -> str | None:
+    if not source or not _valid_line_range(start, end):
+        return None
+
+    lines = source.splitlines()
+    if start > len(lines):
+        return None
+
+    end = min(end, len(lines))
+    code = "\n".join(lines[start - 1:end])
+    return code if code.strip() else None
+
+
+def _line_overlap(
+    a_start: int | None,
+    a_end: int | None,
+    b_start: int | None,
+    b_end: int | None,
+) -> int:
+    if None in (a_start, a_end, b_start, b_end):
+        return 0
+    return max(0, min(a_end, b_end) - max(a_start, b_start) + 1)
+
+
+def _line_distance(
+    a_start: int | None,
+    a_end: int | None,
+    b_start: int | None,
+    b_end: int | None,
+) -> int:
+    if None in (a_start, a_end, b_start, b_end):
+        return 10**9
+
+    if _line_overlap(a_start, a_end, b_start, b_end) > 0:
+        return 0
+
+    if a_end < b_start:
+        return b_start - a_end
+
+    if b_end < a_start:
+        return a_start - b_end
+
+    return 10**9
+
+
+def _find_best_before_method(changed_method, methods_before):
+    """
+    Finn best mulig before-metode.
+    Prioritet:
+    1) Samme navn + linjeoverlapp
+    2) Samme navn + nærmeste range
+    """
+    same_name = [m for m in methods_before if m.name == changed_method.name]
+    if not same_name:
+        return None
+
+    overlapping = [
+        m for m in same_name
+        if _line_overlap(m.start_line, m.end_line, changed_method.start_line, changed_method.end_line) > 0
+    ]
+    if overlapping:
+        return max(
+            overlapping,
+            key=lambda m: _line_overlap(m.start_line, m.end_line, changed_method.start_line, changed_method.end_line)
+        )
+
+    return min(
+        same_name,
+        key=lambda m: _line_distance(m.start_line, m.end_line, changed_method.start_line, changed_method.end_line)
+    )
+
+
+def _find_best_after_method(changed_method, methods_after):
+    """
+    Finn best mulig after-metode.
+    Prioritet:
+    1) Samme navn + eksakt linjematch
+    2) Samme navn + linjeoverlapp
+    3) Samme navn + nærmeste range
+    """
+    exact = [
+        m for m in methods_after
+        if m.name == changed_method.name
+        and m.start_line == changed_method.start_line
+        and m.end_line == changed_method.end_line
+    ]
+    if exact:
+        return exact[0]
+
+    same_name = [m for m in methods_after if m.name == changed_method.name]
+    if not same_name:
+        return None
+
+    overlapping = [
+        m for m in same_name
+        if _line_overlap(m.start_line, m.end_line, changed_method.start_line, changed_method.end_line) > 0
+    ]
+    if overlapping:
+        return max(
+            overlapping,
+            key=lambda m: _line_overlap(m.start_line, m.end_line, changed_method.start_line, changed_method.end_line)
+        )
+
+    return min(
+        same_name,
+        key=lambda m: _line_distance(m.start_line, m.end_line, changed_method.start_line, changed_method.end_line)
+    )
+
+
+def _methods_match_well(before_method, after_method) -> bool:
+    """
+    Krev at before/after faktisk ser ut som samme funksjon.
+    """
+    if not before_method or not after_method:
+        return False
+
+    before_name = (before_method.name or "").strip()
+    after_name = (after_method.name or "").strip()
+
+    if not before_name or not after_name:
+        return False
+
+    if before_name != after_name:
+        return False
+
+    overlap = _line_overlap(
+        before_method.start_line,
+        before_method.end_line,
+        after_method.start_line,
+        after_method.end_line,
+    )
+    if overlap > 0:
+        return True
+
+    distance = _line_distance(
+        before_method.start_line,
+        before_method.end_line,
+        after_method.start_line,
+        after_method.end_line,
+    )
+    return distance <= 15
+
+
 def _extract_commit_data(commit, repo_url: str) -> dict:
     """
     Trekker ut all nødvendig data fra PyDriller-commitobjektet mens repoet
@@ -203,6 +379,10 @@ def _extract_commit_data(commit, repo_url: str) -> dict:
 
     for mf in commit.modified_files:
         file_path = mf.old_path or mf.new_path or "unknown"
+
+        # Filtrer bort testfiler / irrelevante filer
+        if should_skip_file(file_path):
+            continue
 
         # --- patch-data ---
         try:
@@ -232,82 +412,81 @@ def _extract_commit_data(commit, repo_url: str) -> dict:
             })
 
         # --- funksjon-data ---
-        if not mf.source_code_before or not mf.changed_methods:
+        if not mf.source_code_before or not mf.source_code or not mf.changed_methods:
             continue
 
         for changed_method in mf.changed_methods:
-            # finn before-metode
-            before_method = None
-            for m in mf.methods_before:
-                if m.name == changed_method.name:
-                    before_method = m
-                    break
+            before_method = _find_best_before_method(changed_method, mf.methods_before)
+            after_method = _find_best_after_method(changed_method, mf.methods)
 
-            # finn after-metode
-            after_method = None
-            for m in mf.methods:
-                if (m.name == changed_method.name
-                        and m.start_line == changed_method.start_line
-                        and m.end_line == changed_method.end_line):
-                    after_method = m
-                    break
-            if not after_method:
-                for m in mf.methods:
-                    if m.name == changed_method.name:
-                        after_method = m
-                        break
-            if not after_method:
-                after_method = changed_method
-
-            if not before_method and not after_method:
+            if not before_method or not after_method:
                 continue
 
-            method_obj = before_method or after_method
+            if not _methods_match_well(before_method, after_method):
+                continue
+
+            method_name = (before_method.name or after_method.name or "").strip()
+            if not _is_valid_method_name(method_name):
+                continue
+
+            if not _valid_line_range(before_method.start_line, before_method.end_line):
+                continue
+            if not _valid_line_range(after_method.start_line, after_method.end_line):
+                continue
+
             key = (
-                "combined", file_path, method_obj.name,
-                before_method.start_line if before_method else None,
-                before_method.end_line if before_method else None,
-                after_method.start_line if after_method else None,
-                after_method.end_line if after_method else None,
+                "combined",
+                file_path,
+                method_name,
+                before_method.start_line,
+                before_method.end_line,
+                after_method.start_line,
+                after_method.end_line,
             )
             if key in seen:
                 continue
             seen.add(key)
 
-            def _extract(source, start, end):
-                if not source or not start or not end:
-                    return None
-                lines = source.splitlines()
-                if start > len(lines):
-                    return None
-                end = min(end, len(lines))
-                code = "\n".join(lines[start - 1:end])
-                return code if code.strip() else None
-
-            vuln_code = _extract(
+            vuln_code = _extract_code_block(
                 mf.source_code_before,
-                before_method.start_line if before_method else None,
-                before_method.end_line if before_method else None,
+                before_method.start_line,
+                before_method.end_line,
             )
-            patch_code = _extract(
+            patch_code = _extract_code_block(
                 mf.source_code,
-                after_method.start_line if after_method else None,
-                after_method.end_line if after_method else None,
+                after_method.start_line,
+                after_method.end_line,
             )
 
-            if not vuln_code and not patch_code:
+            # Krev komplett vulnerability -> patch par
+            if not vuln_code or not patch_code:
                 continue
 
             functions_data.append({
                 "file_path": file_path,
-                "method_name": method_obj.name,
-                "vuln_start_line": before_method.start_line if before_method else None,
-                "vuln_end_line": before_method.end_line if before_method else None,
+                "method_name": method_name,
+                "vuln_start_line": before_method.start_line,
+                "vuln_end_line": before_method.end_line,
                 "vuln_function": vuln_code,
-                "patched_start_line": after_method.start_line if after_method else None,
-                "patched_end_line": after_method.end_line if after_method else None,
+                "patched_start_line": after_method.start_line,
+                "patched_end_line": after_method.end_line,
                 "patch_function": patch_code,
             })
+
+    # ── Postprosessering: fjern bulk-refaktorering ──
+    # Hvis en commit har mange funksjoner der vuln og patch har identisk
+    # lengde, er det typisk en mekanisk endring (f.eks. parameter-rekkefølge)
+    # som ikke representerer en reell sikkerhetsfix.
+    _BULK_THRESHOLD = 10
+    same_len = [
+        fn for fn in functions_data
+        if len(fn["vuln_function"]) == len(fn["patch_function"])
+    ]
+    if len(same_len) > _BULK_THRESHOLD:
+        functions_data = [
+            fn for fn in functions_data
+            if len(fn["vuln_function"]) != len(fn["patch_function"])
+        ]
 
     return {
         "commit_hash": commit.hash,
@@ -348,7 +527,6 @@ def _load_single_commit(repo_url: str, commit_hash: str):
 
             for commit in repo.traverse_commits():
                 if commit.hash == commit_hash:
-                    # Trekk ut ALT mens repoet fortsatt er på disk
                     result = _extract_commit_data(commit, repo_url)
                     break
 
@@ -371,6 +549,7 @@ def _load_single_commit(repo_url: str, commit_hash: str):
         _rmtree_with_retries(repo_dir)
 
     return result
+
 
 def load_single_commit(repo_url: str, commit_hash: str):
     """
@@ -421,7 +600,7 @@ def cleanup_all_temp_repos():
     så vi retryer. Hvis det fortsatt er låst, kræsjer vi ikke ingest.
     """
     clear_repo_access_cache()
-    
+
     clone_root = Path("temp_repos")
     if not clone_root.exists():
         return
