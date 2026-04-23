@@ -8,6 +8,7 @@ _DIFF_META_PREFIXES = (
     "index ",
     "--- ",
     "+++ ",
+    "@@",
     "new file mode",
     "deleted file mode",
     "similarity index",
@@ -31,7 +32,7 @@ def parse_patch(patch_text: str | None) -> dict[str, Any]:
 
     for line in patch_text.splitlines():
         # skip diff headers / metadata
-        if line.startswith(("diff --git", "index ", "---", "+++", "@@")):
+        if line.startswith(_DIFF_META_PREFIXES):
             if line.startswith("@@"):
                 hunk_count += 1
             continue
