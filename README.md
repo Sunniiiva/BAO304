@@ -88,13 +88,11 @@ Tokenet settes som miljøvariabel og lagres aldri i kildekoden:
 **Windows (PowerShell):**
 ```powershell
 $env:GITHUB_TOKEN = "ditt_token_her"
-python -m src.main enrich-commits
 ```
 
 **Mac/Linux:**
 ```bash
 export GITHUB_TOKEN="ditt_token_her"
-python -m src.main enrich-commits
 ```
 
 Et GitHub-token opprettes under: GitHub → Settings → Developer settings →

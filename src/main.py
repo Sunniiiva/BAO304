@@ -30,13 +30,20 @@ from src.db import (
 
 from src.patch.fetch_patch import build_patch_data_from_modified_files
 from src.commit import extract_commit_references
+from src.commit.method_matching import _has_meaningful_code_change
 
-from src.utils.git_access import cleanup_all_temp_repos
+from src.utils.git_access import cleanup_all_temp_repos, enable_git_longpaths
 from src.commit.load_commit import load_single_commit
 
 app = typer.Typer(help="CVE -> commit -> patch pipeline")
 
 DEFAULT_DB_PATH = Path("data/processed/cve_commits.db")
+
+
+@app.callback()
+def _startup() -> None:
+    """Kjøres automatisk før enhver kommando."""
+    enable_git_longpaths()
 
 # -----------------------------------------------------------------------
 # Funksjon for å prosessere én CVE og lagre metadata + commit-referanser
@@ -157,9 +164,31 @@ def _enrich_one_commit(item: dict, db_path: Path, stats: dict, stats_lock: threa
 
         try:
             combined_functions = commit.get("functions", [])
+            saved_functions = 0
+            skipped_ws = 0
+            skipped_dup = 0
+            seen_keys: set[tuple[str, str, str]] = set()
+
             for fn in combined_functions:
                 if fn.get("vuln_function") is None or fn.get("patch_function") is None:
                     continue
+
+                # --- Filtrering: whitespace-only endringer ---
+                if not _has_meaningful_code_change(fn["vuln_function"], fn["patch_function"]):
+                    skipped_ws += 1
+                    continue
+
+                # --- Filtrering: duplikater (samme fil + metode + startlinje) ---
+                dedup_key = (
+                    fn["file_path"],
+                    fn["method_name"],
+                    str(fn.get("vuln_start_line")),
+                )
+                if dedup_key in seen_keys:
+                    skipped_dup += 1
+                    continue
+                seen_keys.add(dedup_key)
+
                 insert_function(
                     conn,
                     repo_url=repo_url,
@@ -173,7 +202,12 @@ def _enrich_one_commit(item: dict, db_path: Path, stats: dict, stats_lock: threa
                     vuln_function=fn["vuln_function"],
                     patch_function=fn["patch_function"],
                 )
-            typer.echo(f"  [{sha[:8]}] {len(combined_functions)} funksjon(er), {patches_saved} patch(er) lagret")
+                saved_functions += 1
+
+            skip_msg = ""
+            if skipped_ws or skipped_dup:
+                skip_msg = f" (filtrert: {skipped_ws} whitespace, {skipped_dup} duplikat)"
+            typer.echo(f"  [{sha[:8]}] {saved_functions} funksjon(er), {patches_saved} patch(er) lagret{skip_msg}")
         except Exception as e:
             typer.echo(f"  [{sha[:8]}] Funksjonshenting feilet: {e}")
 

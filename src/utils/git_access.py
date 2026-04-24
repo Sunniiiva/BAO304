@@ -4,12 +4,15 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import stat
 import subprocess
 import threading
 import time
+
+logger = logging.getLogger(__name__)
 
 from contextlib import contextmanager
 from pathlib import Path
@@ -19,6 +22,24 @@ from pathlib import Path
 # for samme repo tusenvis av ganger i samme kjøring.
 _REPO_ACCESS_CACHE: dict[str, tuple[bool, str | None]] = {}
 _REPO_ACCESS_LOCK = threading.Lock()
+
+
+def enable_git_longpaths() -> None:
+    """
+    Setter git core.longpaths=true globalt.
+    Uten dette vil git på Windows nekte å sjekke ut filer
+    der den fulle stien overstiger MAX_PATH (260 tegn).
+    Trygt å kalle flere ganger — git ignorerer kallet hvis verdien allerede er satt.
+    """
+    try:
+        subprocess.run(
+            ["git", "config", "--global", "core.longpaths", "true"],
+            capture_output=True,
+            timeout=10,
+        )
+        logger.debug("git core.longpaths=true aktivert")
+    except Exception as e:
+        logger.warning("Kunne ikke sette core.longpaths: %s", e)
 
 
 @contextmanager
@@ -197,4 +218,3 @@ def cleanup_all_temp_repos():
         print(f"temp_repos var låst – flyttet til {stale} (kan slettes senere).")
     except Exception:
         print("temp_repos var låst og kunne ikke slettes – lar den ligge.")
-
