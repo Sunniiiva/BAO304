@@ -29,12 +29,10 @@ from src.db import (
 )
 
 from src.patch.fetch_patch import build_patch_data_from_modified_files
-from src.repo import extract_commit_references
+from src.commit import extract_commit_references
 
-from src.repo.utils import (
-    cleanup_all_temp_repos,
-    load_single_commit,
-)
+from src.utils.git_access import cleanup_all_temp_repos
+from src.commit.load_commit import load_single_commit
 
 app = typer.Typer(help="CVE -> commit -> patch pipeline")
 

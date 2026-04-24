@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from src.patch.parse_patch import parse_patch
 from src.patch.language_detection import detect_language_from_path
-from src.patch.file_filter import should_skip_file
+from src.utils.file_filter import should_skip_file
 
 #-----------------------------------------------------------------
 # Funksjon for å bygge patch-data fra en liste med modified_files
