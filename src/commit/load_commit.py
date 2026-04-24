@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import gc
+import tempfile
 
 from pathlib import Path
 
@@ -23,10 +24,10 @@ from src.commit.method_matching import (
     _find_best_after_method,
     _find_best_before_method,
     _is_valid_method_name,
+    _looks_like_function,
     _methods_match_well,
     _valid_line_range,
 )
-from src.utils.parse_url import _repo_dir_name
 
 
 def _extract_commit_data(commit, repo_url: str) -> dict:
@@ -123,6 +124,11 @@ def _extract_commit_data(commit, repo_url: str) -> dict:
             if not vuln_code or not patch_code:
                 continue
 
+            # Avvis kodeblokker som ikke er reelle funksjoner
+            # (f.eks. catch/else/finally-blokker feilidentifisert av parseren)
+            if not _looks_like_function(vuln_code) or not _looks_like_function(patch_code):
+                continue
+
             functions_data.append({
                 "file_path": file_path,
                 "method_name": method_name,
@@ -170,11 +176,7 @@ def _load_single_commit(repo_url: str, commit_hash: str):
     if not accessible:
         return {"error": reason, "skip_reason": "repo_inaccessible"}
 
-    clone_root = Path("temp_repos")
-    clone_root.mkdir(parents=True, exist_ok=True)
-
-    repo_dir = clone_root / _repo_dir_name(repo_url, commit_hash)
-    repo_dir.mkdir(parents=True, exist_ok=True)
+    repo_dir = Path(tempfile.mkdtemp(prefix="cve_"))
 
     result = {"error": f"Commit {commit_hash} ikke funnet i {repo_url}", "skip_reason": "commit_not_found"}
 

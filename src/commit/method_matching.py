@@ -44,7 +44,81 @@ def _extract_code_block(source: str | None, start: int | None, end: int | None) 
 
     end = min(end, len(lines))
     code = "\n".join(lines[start - 1:end])
+    code = _clean_extracted_code(code)
     return code if code.strip() else None
+
+
+# ---------------------------------------------------------------------
+# Opprydding og validering av ekstraherte kodeblokker
+# ---------------------------------------------------------------------
+
+# Linjer som bare er "søppel" fra forrige funksjon eller kommentarblokker —
+# ikke del av funksjonen selv, men inkludert pga. upresise linjegrenser.
+_JUNK_LINE_RE = re.compile(
+    r"^\s*(?:"
+    r"\}[;\s]*"           # enslig } eventuelt med ; og whitespace
+    r"|[%]{3,}"           # %%%-kommentarlinjer (ImageMagick-stil)
+    r"|#\s*(?:endif|else|if)\b.*"  # preprocessor-vakter
+    r"|[/*]+\s*$"         # tomme kommentarlinjer som / eller /* eller *
+    r")$"
+)
+
+
+def _clean_extracted_code(code: str) -> str:
+    """
+    Fjerner ledende søppellinjer som ikke tilhører funksjonen:
+    enslige '}', %%%-kommentarblokker, preprocessor-vakter, osv.
+    Gjør at funksjoner med upresise startgrenser likevel kan brukes.
+    """
+    lines = code.splitlines()
+
+    # Strip ledende søppel
+    while lines and _JUNK_LINE_RE.match(lines[0]):
+        lines.pop(0)
+
+    # Strip ledende tomme linjer
+    while lines and not lines[0].strip():
+        lines.pop(0)
+
+    return "\n".join(lines)
+
+
+# Nøkkelord som starter kontrollflyt-blokker, aldri en funksjonsdefinisjon.
+# Matcher også varianten der } og nøkkelord står på samme linje.
+_NON_FUNCTION_STARTS = re.compile(
+    r"^\s*\}?\s*(?:"
+    r"catch\s*\("
+    r"|else\s*[\{:]"
+    r"|else\s+if\s*\("
+    r"|elif\s"
+    r"|except\b"
+    r"|finally\s*[\{:]"
+    r"|case\s+.+:"
+    r"|default\s*:"
+    r")"
+)
+
+
+def _looks_like_function(code: str) -> bool:
+    """
+    Sjekker at den ekstraherte koden ser ut som en reell funksjon,
+    ikke en tilfeldig catch/else/finally-blokk som parseren feilaktig
+    identifiserte som en metode.
+    """
+    if not code:
+        return False
+
+    # Finn første ikke-tomme linje
+    for line in code.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        # Avvis hvis den starter med et kontrollflyt-nøkkelord
+        if _NON_FUNCTION_STARTS.match(stripped):
+            return False
+        return True
+
+    return False
 
 
 def _line_overlap(
@@ -141,6 +215,41 @@ def _find_best_after_method(changed_method, methods_after):
         same_name,
         key=lambda m: _line_distance(m.start_line, m.end_line, changed_method.start_line, changed_method.end_line)
     )
+
+
+def _strip_comments(code: str) -> str:
+    """Fjerner kommentarer (block og linje) fra kode."""
+    # Block-kommentarer: /* ... */ og /** ... */
+    code = re.sub(r"/\*.*?\*/", "", code, flags=re.DOTALL)
+    # Linje-kommentarer: // ...
+    code = re.sub(r"//[^\n]*", "", code)
+    # Python/shell/PHP-kommentarer: # ...
+    code = re.sub(r"#[^\n]*", "", code)
+    return code
+
+
+def _has_meaningful_code_change(vuln_code: str | None, patch_code: str | None) -> bool:
+    """
+    Returnerer True bare hvis vuln og patch har en reell kodeendring —
+    filtrerer bort endringer som kun er whitespace og/eller kommentarer.
+    """
+    if not vuln_code or not patch_code:
+        return False
+
+    def _normalize(s: str) -> str:
+        return re.sub(r"\s+", "", s)
+
+    # Steg 1: sjekk om endringen kun er whitespace
+    if _normalize(vuln_code) == _normalize(patch_code):
+        return False
+
+    # Steg 2: sjekk om endringen kun er kommentarer (+ whitespace)
+    vuln_stripped = _strip_comments(vuln_code)
+    patch_stripped = _strip_comments(patch_code)
+    if _normalize(vuln_stripped) == _normalize(patch_stripped):
+        return False
+
+    return True
 
 
 def _methods_match_well(before_method, after_method) -> bool:
