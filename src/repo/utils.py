@@ -1,13 +1,23 @@
 #---------------------------------------------------------------------
 # Generelle hjelpefunksjoner for parsing av CVE-er, commits og patcher.
+#
+# Støtter flere git-plattformer:
+#   - GitHub     (github.com)
+#   - GitLab     (gitlab.com)
+#   - Bitbucket  (bitbucket.org)
+#
+# Designvalg (inspirert av CVEfixes):
+#   Vi bruker én felles regex for å detektere plattform + parse
+#   owner/repo/hash fra commit-URL-er. Selve kloningen og traverseringen
+#   skjer med PyDriller/git, som er plattformuavhengig.
 #---------------------------------------------------------------------
 
-#Imports 
 from __future__ import annotations
 
 import gc
 import hashlib
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -20,112 +30,167 @@ from typing import Any
 
 from pydriller import Repository
 
-# Cache for repo-tilgjengelighet så vi slipper å kjøre git ls-remote
-# for samme repo tusenvis av ganger i samme kjøring.
 _REPO_ACCESS_CACHE: dict[str, tuple[bool, str | None]] = {}
 _REPO_ACCESS_LOCK = threading.Lock()
 
 
 #---------------------------------------------------------------------
-# Funksjon for å parse Github commit-referanser fra CVE-data
+# Plattform-konfigurasjon
+#---------------------------------------------------------------------
+SUPPORTED_PLATFORMS: dict[str, dict[str, Any]] = {
+    "github": {
+        "hosts": ("github.com",),
+        "token_env": "GITHUB_TOKEN",
+        "commit_segments": ("commit", "commits"),
+    },
+    "gitlab": {
+        "hosts": ("gitlab.com",),
+        "token_env": "GITLAB_TOKEN",
+        "commit_segments": ("commit", "commits"),
+    },
+    "bitbucket": {
+        "hosts": ("bitbucket.org",),
+        "token_env": "BITBUCKET_TOKEN",
+        "commit_segments": ("commits", "commit"),
+    },
+}
+
+# Felles regex for alle tre plattformer (inspirert av CVEfixes).
+_COMMIT_URL_REGEX = re.compile(
+    r"https?://"
+    r"(?P<host>github\.com|gitlab\.com|bitbucket\.org)/"
+    r"(?P<owner>[^/\s]+)/"
+    r"(?P<repo>[^/\s]+)"
+    r"(?:/-)?"                       # GitLab kan ha "/-" før /commit/
+    r"/(?:commit|commits)/"
+    r"(?P<hash>[0-9a-fA-F]{7,40})",
+    re.IGNORECASE,
+)
+
+
+def detect_platform(url: str) -> str | None:
+    """
+    Returnerer plattform-nøkkelen ("github" | "gitlab" | "bitbucket")
+    for en gitt URL, eller None hvis den ikke er støttet.
+    """
+    if not url:
+        return None
+    lowered = url.lower()
+    for platform, cfg in SUPPORTED_PLATFORMS.items():
+        for host in cfg["hosts"]:
+            if host in lowered:
+                return platform
+    return None
+
+
+#---------------------------------------------------------------------
+# Funksjon for å parse commit-referanser fra CVE-data
 #---------------------------------------------------------------------
 def extract_repo_and_hash(commit_url: str):
     """
-    Parser GitHub commit-URL og returnerer:
+    Parser commit-URL fra GitHub, GitLab eller Bitbucket og returnerer:
       {
-        "repo_url": "https://github.com/owner/repo",
-        "commit_hash": "<sha>"
+        "repo_url":    "https://<host>/<owner>/<repo>",
+        "commit_hash": "<sha>",
+        "platform":    "github" | "gitlab" | "bitbucket"
       }
 
     Støtter:
-    - Vanlig URL: https://github.com/owner/repo/commit/<hash>
-    - Markdown:  [tekst](https://github.com/owner/repo/commit/<hash>)
-    - Returnerer dict med 'repo_url' og 'commit_hash', eller None hvis parsing feiler.
+    - GitHub:    https://github.com/owner/repo/commit/<hash>
+    - GitLab:    https://gitlab.com/owner/repo/-/commit/<hash>
+                 https://gitlab.com/owner/repo/commit/<hash>
+    - Bitbucket: https://bitbucket.org/owner/repo/commits/<hash>
+                 https://bitbucket.org/owner/repo/commit/<hash>
+    - Markdown-wrappede URL-er: [tekst](https://...)
     """
-    if not commit_url or "github.com" not in commit_url:
+    if not commit_url:
         return None
 
     if "(" in commit_url and ")" in commit_url:
         commit_url = commit_url.split("(")[-1].split(")")[0]
 
-    clean_url = (
-        commit_url.replace("https://", "")
-        .replace("http://", "")
-        .split("?")[0]
-        .split("#")[0]
-    )
+    cleaned = commit_url.split("?")[0].split("#")[0].strip()
 
-    parts = [p for p in clean_url.strip("/").split("/") if p]
+    match = _COMMIT_URL_REGEX.search(cleaned)
+    if not match:
+        return None
 
-    if len(parts) >= 5 and parts[0] == "github.com" and parts[3] == "commit":
-        owner = parts[1]
-        repo = parts[2]
-        commit_hash = parts[4]
-        return {
-            "repo_url": f"https://github.com/{owner}/{repo}",
-            "commit_hash": commit_hash,
-        }
+    host = match.group("host").lower()
+    owner = match.group("owner")
+    repo = match.group("repo")
+    commit_hash = match.group("hash")
 
-    if len(parts) >= 4 and parts[2] == "commit":
-        owner = parts[0]
-        repo = parts[1]
-        commit_hash = parts[3]
-        return {
-            "repo_url": f"https://github.com/{owner}/{repo}",
-            "commit_hash": commit_hash,
-        }
+    if repo.endswith(".git"):
+        repo = repo[:-4]
 
-    return None
+    platform = detect_platform(host)
+    if platform is None:
+        return None
+
+    return {
+        "repo_url": f"https://{host}/{owner}/{repo}",
+        "commit_hash": commit_hash,
+        "platform": platform,
+    }
 
 
 def _repo_dir_name(repo_url: str, commit_hash: str) -> str:
-    """
-    Lager et unikt mappenavn basert på en kort SHA256-hash av repo_url + commit_hash.
-    Unik per commit slik at parallelle workers aldri kolliderer på samme mappe.
-    Unngår også for lange stier på Windows (MAX_PATH = 260 tegn).
-    """
+    """Lager et unikt mappenavn basert på SHA256 av repo_url + commit_hash."""
     key = f"{repo_url}#{commit_hash}"
     return hashlib.sha256(key.encode()).hexdigest()[:16]
 
+
 @contextmanager
 def _non_interactive_git_env():
-    """
-    Hindrer git fra å åpne login prompt / credential popup.
-    Fungerer spesielt viktig på Windows.
-    """
+    """Hindrer git fra å åpne login prompt / credential popup."""
     old_env = os.environ.copy()
-
     os.environ["GIT_TERMINAL_PROMPT"] = "0"
     os.environ["GCM_INTERACTIVE"] = "Never"
     os.environ["GIT_ASKPASS"] = "echo"
-
     try:
         yield
     finally:
         os.environ.clear()
         os.environ.update(old_env)
 
+
 def _inject_token(repo_url: str) -> str:
     """
-    Injiserer GITHUB_TOKEN fra miljøvariabel inn i GitHub-URL hvis tilgjengelig.
-    Øker rate limit fra 60 til 5000 forespørsler per time.
-    Tokenet settes som miljøvariabel og lagres aldri i kildekoden.
+    Injiserer riktig plattform-token fra miljøvariabel inn i repo-URL-en.
 
-    Eksempel:
-      GITHUB_TOKEN=ghp_abc123 python -m src.main ingest
+    Tokens per plattform:
+      GITHUB_TOKEN     -> https://<token>@github.com/...
+      GITLAB_TOKEN     -> https://oauth2:<token>@gitlab.com/...
+      BITBUCKET_TOKEN  -> https://x-token-auth:<token>@bitbucket.org/...
+                          (fallback: BITBUCKET_USERNAME + BITBUCKET_APP_PASSWORD)
     """
-    token = os.environ.get("GITHUB_TOKEN", "").strip()
-    if token and "github.com" in repo_url:
+    platform = detect_platform(repo_url)
+    if platform is None:
+        return repo_url
+
+    cfg = SUPPORTED_PLATFORMS[platform]
+    token = os.environ.get(cfg["token_env"], "").strip()
+
+    if not token:
+        if platform == "bitbucket":
+            user = os.environ.get("BITBUCKET_USERNAME", "").strip()
+            app_pw = os.environ.get("BITBUCKET_APP_PASSWORD", "").strip()
+            if user and app_pw:
+                return repo_url.replace("https://", f"https://{user}:{app_pw}@")
+        return repo_url
+
+    if platform == "github":
         return repo_url.replace("https://", f"https://{token}@")
+    elif platform == "gitlab":
+        return repo_url.replace("https://", f"https://oauth2:{token}@")
+    elif platform == "bitbucket":
+        return repo_url.replace("https://", f"https://x-token-auth:{token}@")
+
     return repo_url
 
 
 def _repo_is_accessible(repo_url: str, timeout: int = 20) -> tuple[bool, str | None]:
-    """
-    Sjekker om repoet kan nås uten interaktiv autentisering.
-    Returnerer (True, None) hvis tilgjengelig,
-    ellers (False, feilmelding).
-    """
+    """Sjekker om repoet kan nås uten interaktiv autentisering."""
     cmd = ["git", "ls-remote", _inject_token(repo_url), "HEAD"]
 
     env = os.environ.copy()
@@ -135,11 +200,7 @@ def _repo_is_accessible(repo_url: str, timeout: int = 20) -> tuple[bool, str | N
 
     try:
         result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            env=env,
+            cmd, capture_output=True, text=True, timeout=timeout, env=env,
         )
 
         if result.returncode == 0:
@@ -148,7 +209,6 @@ def _repo_is_accessible(repo_url: str, timeout: int = 20) -> tuple[bool, str | N
         stderr = (result.stderr or "").strip()
         stdout = (result.stdout or "").strip()
         msg = stderr or stdout or "Ukjent git-feil"
-
         lowered = msg.lower()
 
         if any(x in lowered for x in [
@@ -158,6 +218,9 @@ def _repo_is_accessible(repo_url: str, timeout: int = 20) -> tuple[bool, str | N
             "fatal: could not",
             "terminal prompts disabled",
             "support for password authentication was removed",
+            "project not found",
+            "access denied",
+            "not enough permissions",
         ]):
             return False, f"Repo utilgjengelig eller privat: {msg}"
 
@@ -168,11 +231,9 @@ def _repo_is_accessible(repo_url: str, timeout: int = 20) -> tuple[bool, str | N
     except Exception as e:
         return False, f"Feil ved repo-sjekk: {e}"
 
+
 def get_cached_repo_access(repo_url: str, timeout: int = 20) -> tuple[bool, str | None]:
-    """
-    Returnerer cached resultat for repo-tilgjengelighet hvis tilgjengelig.
-    Trådsikkert: bruker lock slik at flere workers ikke sjekker samme repo samtidig.
-    """
+    """Returnerer cached resultat for repo-tilgjengelighet hvis tilgjengelig."""
     with _REPO_ACCESS_LOCK:
         cached = _REPO_ACCESS_CACHE.get(repo_url)
         if cached is not None:
@@ -186,17 +247,12 @@ def get_cached_repo_access(repo_url: str, timeout: int = 20) -> tuple[bool, str 
 
 
 def clear_repo_access_cache() -> None:
-    """
-    Tømmer cache for repo-tilgjengelighet.
-    Praktisk ved testkjøringer eller hvis man vil starte helt rent.
-    """
+    """Tømmer cache for repo-tilgjengelighet."""
     _REPO_ACCESS_CACHE.clear()
 
+
 def _extract_commit_data(commit, repo_url: str) -> dict:
-    """
-    Trekker ut all nødvendig data fra PyDriller-commitobjektet mens repoet
-    fortsatt finnes på disk. Returnerer ren dict uten referanser til git-objekter.
-    """
+    """Trekker ut all nødvendig data fra PyDriller-commitobjektet."""
     files_data = []
     functions_data = []
     seen = set()
@@ -204,7 +260,6 @@ def _extract_commit_data(commit, repo_url: str) -> dict:
     for mf in commit.modified_files:
         file_path = mf.old_path or mf.new_path or "unknown"
 
-        # --- patch-data ---
         try:
             diff_text = str(mf.diff) if getattr(mf, "diff", None) else ""
             if getattr(mf, "diff_stats", None):
@@ -231,19 +286,16 @@ def _extract_commit_data(commit, repo_url: str) -> dict:
                 "error": str(e),
             })
 
-        # --- funksjon-data ---
         if not mf.source_code_before or not mf.changed_methods:
             continue
 
         for changed_method in mf.changed_methods:
-            # finn before-metode
             before_method = None
             for m in mf.methods_before:
                 if m.name == changed_method.name:
                     before_method = m
                     break
 
-            # finn after-metode
             after_method = None
             for m in mf.methods:
                 if (m.name == changed_method.name
@@ -315,17 +367,20 @@ def _extract_commit_data(commit, repo_url: str) -> dict:
         "author": commit.author.name if commit.author else "unknown",
         "date": str(commit.committer_date) if commit.committer_date else "",
         "repo_url": repo_url,
+        "platform": detect_platform(repo_url),
         "modified_files": files_data,
         "functions": functions_data,
     }
 
 
 def _load_single_commit(repo_url: str, commit_hash: str):
-    """
-    Kloner repoet, trekker ut all nødvendig data mens repoet er på disk,
-    og sletter det umiddelbart etter. Returnerer ren dict — ingen referanser
-    til git-objekter som krever at repoet fortsatt finnes.
-    """
+    """Kloner repoet, trekker ut data, sletter repoet etter. Fungerer for alle støttede plattformer."""
+    if detect_platform(repo_url) is None:
+        return {
+            "error": f"Ustøttet git-plattform for {repo_url}",
+            "skip_reason": "unsupported_platform",
+        }
+
     accessible, reason = get_cached_repo_access(repo_url)
     if not accessible:
         return {"error": reason, "skip_reason": "repo_inaccessible"}
@@ -348,7 +403,6 @@ def _load_single_commit(repo_url: str, commit_hash: str):
 
             for commit in repo.traverse_commits():
                 if commit.hash == commit_hash:
-                    # Trekk ut ALT mens repoet fortsatt er på disk
                     result = _extract_commit_data(commit, repo_url)
                     break
 
@@ -361,6 +415,8 @@ def _load_single_commit(repo_url: str, commit_hash: str):
             "authentication failed",
             "repository not found",
             "terminal prompts disabled",
+            "project not found",
+            "access denied",
         ]):
             result = {"error": f"Privat/utilgjengelig repo: {msg}", "skip_reason": "repo_inaccessible"}
         else:
@@ -372,19 +428,14 @@ def _load_single_commit(repo_url: str, commit_hash: str):
 
     return result
 
+
 def load_single_commit(repo_url: str, commit_hash: str):
-    """
-    Offentlig wrapper rundt _load_single_commit, så resten av koden
-    slipper å importere en intern hjelpefunksjon direkte.
-    """
+    """Offentlig wrapper rundt _load_single_commit."""
     return _load_single_commit(repo_url, commit_hash)
 
 
 def _chmod_tree(path: Path) -> None:
-    """
-    Setter skrive-tillatelse rekursivt på alle filer og mapper i treet.
-    Må gjøres før rmtree på Windows, siden git markerer mange filer som read-only.
-    """
+    """Setter skrive-tillatelse rekursivt. Nødvendig før rmtree på Windows."""
     for root, dirs, files in os.walk(path):
         for d in dirs:
             try:
@@ -399,10 +450,7 @@ def _chmod_tree(path: Path) -> None:
 
 
 def _rmtree_with_retries(path: Path, retries: int = 20, delay: float = 0.2) -> bool:
-    """
-    Setter skrive-tillatelse på hele treet før sletting, deretter retryer.
-    Returnerer True hvis slettet (eller allerede borte), False hvis fortsatt låst.
-    """
+    """Setter skrive-tillatelse, retryer rmtree. Returnerer True hvis slettet."""
     for _ in range(retries):
         if not path.exists():
             return True
@@ -416,12 +464,9 @@ def _rmtree_with_retries(path: Path, retries: int = 20, delay: float = 0.2) -> b
 
 
 def cleanup_all_temp_repos():
-    """
-    Sletter temp_repos. På Windows kan filer være låst en kort stund (WinError 32),
-    så vi retryer. Hvis det fortsatt er låst, kræsjer vi ikke ingest.
-    """
+    """Sletter temp_repos. Windows-trygg med retries."""
     clear_repo_access_cache()
-    
+
     clone_root = Path("temp_repos")
     if not clone_root.exists():
         return
