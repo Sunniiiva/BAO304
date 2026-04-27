@@ -33,9 +33,11 @@ SKIP_DIR_PARTS = {
     ".vscode", ".idea",
     "examples", "example",
     "test", "tests", "__tests__", "testing",
+    "tester", "spec", "specs",
     "benchmark", "benchmarks",
     "dist", "build", "out", "target",
     "node_modules", "vendor",
+    "grammars", "generated",
 }
 
 
@@ -47,8 +49,8 @@ def should_skip_file(file_path: str) -> bool:
     if not file_path:
         return True
 
-    # Normaliser path (git paths er typisk posix)
-    p = PurePosixPath(file_path)
+    # Normaliser path (git paths er typisk posix, men Windows bruker backslash)
+    p = PurePosixPath(file_path.replace("\\", "/"))
     name_lower = p.name.lower()
 
     # Skip eksakt filnavn
@@ -60,9 +62,18 @@ def should_skip_file(file_path: str) -> bool:
     if suffix in SKIP_EXTENSIONS:
         return True
 
+    # Skip minifiserte filer (f.eks. tarteaucitron.min.js, sm2.min.cjs)
+    if ".min." in name_lower:
+        return True
+
     # Skip folder parts
     parts_lower = {part.lower() for part in p.parts}
     if parts_lower & SKIP_DIR_PARTS:
+        return True
+
+    # Skip testfiler basert på filnavn (f.eks. functional_test.py, test_utils.py)
+    stem = p.stem.lower()
+    if stem.startswith("test_") or stem.endswith("_test"):
         return True
 
     return False
