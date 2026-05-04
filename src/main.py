@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import requests
+
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -35,6 +38,9 @@ from src.commit.method_matching import _has_meaningful_code_change
 from src.utils.git_access import cleanup_all_temp_repos, enable_git_longpaths
 from src.commit.load_commit import load_single_commit
 
+from dotenv import load_dotenv
+load_dotenv()  # Laster .env automatisk uansett miljø
+
 app = typer.Typer(help="CVE -> commit -> patch pipeline")
 
 DEFAULT_DB_PATH = Path("data/processed/cve_commits.db")
@@ -44,6 +50,18 @@ DEFAULT_DB_PATH = Path("data/processed/cve_commits.db")
 def _startup() -> None:
     """Kjøres automatisk før enhver kommando."""
     enable_git_longpaths()
+    
+    # GitHub token-sjekk
+    token = os.getenv("GITHUB_TOKEN")
+    if not token:
+        typer.echo("⚠️  Ingen GITHUB_TOKEN funnet – kjører med 60 requests/time")
+    else:
+        response = requests.get(
+            "https://api.github.com/rate_limit",
+            headers={"Authorization": f"token {token}"}
+        )
+        data = response.json()["rate"]
+        typer.echo(f"GitHub token er aktiv – {data['remaining']}/{data['limit']} requests gjenstår")
 
 # -----------------------------------------------------------------------
 # Funksjon for å prosessere én CVE og lagre metadata + commit-referanser

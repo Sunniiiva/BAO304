@@ -1,12 +1,14 @@
 #---------------------------------------------------------------------
-# Commit-lasting: kloner repo, trekker ut commit-data med PyDriller,
+# Commit-lasting: shallow-kloner repo, trekker ut commit-data med PyDriller,
 # og returnerer strukturert dict.
 #---------------------------------------------------------------------
 
 from __future__ import annotations
 
 import gc
-import tempfile
+import os
+import subprocess
+import typer
 
 from pathlib import Path
 
@@ -29,6 +31,106 @@ from src.commit.method_matching import (
     _valid_line_range,
 )
 
+# Prosjektlokal temp-mappe 
+_TEMP_ROOT = Path("temp_repos")
+
+
+def _make_local_temp_dir() -> Path:
+    """
+    Oppretter en unik undermappe under temp_repos/ i prosjektkatalogen.
+    """
+    _TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+    import uuid
+    repo_dir = _TEMP_ROOT / f"cve_{uuid.uuid4().hex[:12]}"
+    repo_dir.mkdir(parents=True, exist_ok=True)
+    return repo_dir
+
+
+def _shallow_clone(repo_url: str, commit_hash: str, target_dir: Path) -> bool:
+    """
+    Gjør en shallow clone med dybde 2 (nok til at PyDriller kan se
+    source_code_before på foreldrecommiten) og sjekker ut kun én commit.
+
+    Returnerer True hvis vellykket, False ellers.
+    """
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GCM_INTERACTIVE"] = "Never"
+    env["GIT_ASKPASS"] = "echo"
+
+    authed_url = _inject_token(repo_url)
+
+    try:
+        # Steg 1: Init tomt repo
+        subprocess.run(
+            ["git", "init", str(target_dir)],
+            capture_output=True, env=env, timeout=30, check=True,
+        )
+
+        # Steg 2: Legg til remote
+        subprocess.run(
+            ["git", "-C", str(target_dir), "remote", "add", "origin", authed_url],
+            capture_output=True, env=env, timeout=30, check=True,
+        )
+
+        # Steg 3: Fetch kun den spesifikke commiten (shallow, dybde 2)
+        # --depth=2 gir oss commiten OG forelderen → PyDriller kan diff'e
+        result = subprocess.run(
+            ["git", "-C", str(target_dir), "fetch",
+             "--depth=2", "--no-tags",
+             "origin", commit_hash],
+            capture_output=True, env=env, timeout=120,
+        )
+
+        if result.returncode != 0:
+            # Noen repos støtter ikke fetch av enkeltkommer direkte.
+            # Fallback: shallow clone av HEAD med dybde 1 (gir ikke source_code_before,
+            # men unngår full klon)
+            result2 = subprocess.run(
+                ["git", "-C", str(target_dir), "fetch",
+                 "--depth=1", "--no-tags",
+                 "origin", f"+{commit_hash}:refs/remotes/origin/target"],
+                capture_output=True, env=env, timeout=120,
+            )
+            if result2.returncode != 0:
+                return False
+
+        # Steg 4: Checkout commiten
+        subprocess.run(
+            ["git", "-C", str(target_dir), "checkout", commit_hash],
+            capture_output=True, env=env, timeout=60,
+        )
+
+        return True
+
+    except subprocess.TimeoutExpired:
+        return False
+    except subprocess.CalledProcessError:
+        return False
+    except Exception:
+        return False
+
+def _full_clone(repo_url: str, target_dir: Path) -> bool:
+    """
+    Full clone uten depth-begrensning. Brukes som fallback når shallow feiler.
+    """
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GCM_INTERACTIVE"] = "Never"
+    env["GIT_ASKPASS"] = "echo"
+
+    authed_url = _inject_token(repo_url)
+
+    try:
+        result = subprocess.run(
+            ["git", "clone", "--no-tags", "--quiet", authed_url, str(target_dir)],
+            capture_output=True, env=env, timeout=300,
+        )
+        return result.returncode == 0
+    except subprocess.TimeoutExpired:
+        return False
+    except Exception:
+        return False
 
 def _extract_commit_data(commit, repo_url: str) -> dict:
     """
@@ -141,9 +243,6 @@ def _extract_commit_data(commit, repo_url: str) -> dict:
             })
 
     # ── Postprosessering: fjern bulk-refaktorering ──
-    # Hvis en commit har mange funksjoner der vuln og patch har identisk
-    # lengde, er det typisk en mekanisk endring (f.eks. parameter-rekkefølge)
-    # som ikke representerer en reell sikkerhetsfix.
     _BULK_THRESHOLD = 10
     same_len = [
         fn for fn in functions_data
@@ -167,26 +266,28 @@ def _extract_commit_data(commit, repo_url: str) -> dict:
 
 
 def _load_single_commit(repo_url: str, commit_hash: str):
-    """
-    Kloner repoet, trekker ut all nødvendig data mens repoet er på disk,
-    og sletter det umiddelbart etter. Returnerer ren dict — ingen referanser
-    til git-objekter som krever at repoet fortsatt finnes.
-    """
+ 
     accessible, reason = get_cached_repo_access(repo_url)
     if not accessible:
         return {"error": reason, "skip_reason": "repo_inaccessible"}
 
-    repo_dir = Path(tempfile.mkdtemp(prefix="cve_"))
-
+    repo_dir = _make_local_temp_dir()
     result = {"error": f"Commit {commit_hash} ikke funnet i {repo_url}", "skip_reason": "commit_not_found"}
 
     try:
         with _non_interactive_git_env():
-            repo = Repository(
-                _inject_token(repo_url),
-                clone_repo_to=str(repo_dir),
-                single=commit_hash,
-            )
+            cloned = _shallow_clone(repo_url, commit_hash, repo_dir)
+
+            if not cloned:
+                # Shallow feilet – prøv full clone som fallback
+                _rmtree_with_retries(repo_dir)
+                repo_dir = _make_local_temp_dir()
+                cloned = _full_clone(repo_url, repo_dir)
+
+            if not cloned:
+                return {"error": f"Kloning feilet for {repo_url}", "skip_reason": "commit_fetch_failed"}
+
+            repo = Repository(str(repo_dir), single=commit_hash)
 
             for commit in repo.traverse_commits():
                 if commit.hash == commit_hash:
@@ -194,18 +295,27 @@ def _load_single_commit(repo_url: str, commit_hash: str):
                     break
 
     except Exception as e:
-        msg = str(e)
-        lowered = msg.lower()
+        # Shallow krasjet under PyDriller-kjøring – prøv full clone
+        typer.echo(f"  [{commit_hash[:8]}] Shallow krasjet ({e}), prøver full clone...")
+        try:
+            _rmtree_with_retries(repo_dir)
+            repo_dir = _make_local_temp_dir()
 
-        if any(x in lowered for x in [
-            "could not read username",
-            "authentication failed",
-            "repository not found",
-            "terminal prompts disabled",
-        ]):
-            result = {"error": f"Privat/utilgjengelig repo: {msg}", "skip_reason": "repo_inaccessible"}
-        else:
-            result = {"error": f"Feil ved henting av {repo_url}@{commit_hash}: {msg}", "skip_reason": "commit_fetch_failed"}
+            if _full_clone(repo_url, repo_dir):
+                repo = Repository(str(repo_dir), single=commit_hash)
+                for commit in repo.traverse_commits():
+                    if commit.hash == commit_hash:
+                        result = _extract_commit_data(commit, repo_url)
+                        break
+            else:
+                result = {"error": f"Full clone feilet også for {repo_url}", "skip_reason": "commit_fetch_failed"}
+        except Exception as e2:
+            msg = str(e2).lower()
+            if any(x in msg for x in ["could not read username", "authentication failed",
+                                       "repository not found", "terminal prompts disabled"]):
+                result = {"error": f"Privat/utilgjengelig repo: {e2}", "skip_reason": "repo_inaccessible"}
+            else:
+                result = {"error": f"Feil ved henting av {repo_url}@{commit_hash}: {e2}", "skip_reason": "commit_fetch_failed"}
 
     finally:
         gc.collect()
