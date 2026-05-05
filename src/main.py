@@ -61,9 +61,9 @@ def _startup() -> None:
     enable_git_longpaths()
 
 
-# -----------------------------------------------------------------------
+
 # Process one CVE and save metadata + commit references
-# -----------------------------------------------------------------------
+
 def process_single_cve_metadata(conn, cve_data: dict) -> str | None:
     """
     Save metadata for one CVE and any commit references it points to.
@@ -113,9 +113,9 @@ def process_single_cve_metadata(conn, cve_data: dict) -> str | None:
     return cve_id
 
 
-# --------------------------------------------
+
 # Enrich one commit (runs in its own thread)
-# --------------------------------------------
+
 def _enrich_one_commit(item: dict, db_path: Path, stats: dict, stats_lock: threading.Lock) -> None:
     """
     Fetch, parse and save one commit with its patches and functions.
@@ -164,7 +164,7 @@ def _enrich_one_commit(item: dict, db_path: Path, stats: dict, stats_lock: threa
             author=author,
         )
 
-        # ---- Save patches (one row per modified file) ----
+        # Save patches
         patches_saved = 0
         try:
             patch_list = build_patch_data_from_modified_files(
@@ -191,7 +191,7 @@ def _enrich_one_commit(item: dict, db_path: Path, stats: dict, stats_lock: threa
             # Don't kill the whole commit if a patch fails
             typer.echo(f"  [{sha[:8]}] Patch fetch failed: {e}")
 
-        # ---- Save modified functions (one row per method) ----
+        # Saves modified functions (one row per method) 
         try:
             combined_functions = commit.get("functions", [])
             saved_functions = 0
@@ -204,7 +204,7 @@ def _enrich_one_commit(item: dict, db_path: Path, stats: dict, stats_lock: threa
                 if fn.get("vuln_function") is None or fn.get("patch_function") is None:
                     continue
 
-                # Skip whitespace-only diffs (just noise)
+                # Skip whitespace-only diffs
                 if not _has_meaningful_code_change(fn["vuln_function"], fn["patch_function"]):
                     skipped_ws += 1
                     continue
@@ -263,9 +263,9 @@ def _enrich_one_commit(item: dict, db_path: Path, stats: dict, stats_lock: threa
         conn.close()
 
 
-# --------------------------------------------
+
 # Enrich unique commits with PyDriller
-# --------------------------------------------
+
 def enrich_unique_commits(
     conn,
     db_path: Path,
@@ -314,9 +314,9 @@ def enrich_unique_commits(
     return stats
 
 
-# --------------------------------------------
+
 # Ingest command
-# --------------------------------------------
+
 @app.command("ingest")
 def ingest(
     full: bool = typer.Option(
@@ -467,9 +467,9 @@ def ingest(
     typer.echo(f"Patches saved: {patch_total}")
 
 
-# --------------------------------------------
+
 # Enrich-commits command
-# --------------------------------------------
+
 @app.command("enrich-commits")
 def enrich_commits(
     limit: int | None = typer.Option(

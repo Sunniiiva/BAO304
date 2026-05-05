@@ -3,9 +3,9 @@ from __future__ import annotations
 from src.utils.parse_url import extract_repo_and_hash
 from src.cve.parse_cve import extract_grouped_references
 
-#---------------------------------------------------------
+
 # Funksjon for å trekke ut commit-referanser fra CVE-data
-#---------------------------------------------------------
+
 def extract_commit_references(cve_data: dict) -> list[dict]:
     """
     Leser GitHub /commit/-referanser fra én CVE og returnerer en liste som:

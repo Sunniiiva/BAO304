@@ -1,15 +1,15 @@
-# --------------------------------------------------------------
+
 # IMPORTS: libraries needed for the DB layer
-# ---------------------------------------------------------------
+
 from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
 
 
-# -----------------
+
 # Database schema
-# -----------------
+
 # All tables and indexes defined as a single SQL script.
 # IF NOT EXISTS makes the script safe to re-run on an existing database
 SCHEMA_SQL = """
@@ -127,9 +127,8 @@ ON functions(repo_url, commit_sha);
 """
 
 
-# -----------------------------------
+
 # Function: connect to the database
-# -----------------------------------
 def connect(db_path: str | Path) -> sqlite3.Connection:
     # Ensure the parent folder exists so SQLite can create the file
     db_path = Path(db_path)
@@ -144,18 +143,16 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     return conn
 
 
-# -------------------------------------------------
+
 # Function: initialize the database with the schema
-# -------------------------------------------------
 def init_db(conn: sqlite3.Connection) -> None:
     # executescript runs multiple SQL statements at once
     conn.executescript(SCHEMA_SQL)
     conn.commit()
 
 
-# ---------------------------------------------------
+
 # Function: insert or update a CVE row
-# ---------------------------------------------------
 # "Upsert" pattern: insert if new, update if it already exists.
 # ON CONFLICT(cve_id) means the conflict is detected on the primary key
 def upsert_cve(
@@ -186,9 +183,8 @@ def upsert_cve(
     )
 
 
-# ------------------------------------------------------
+
 # Function: insert or update a commit row
-# ------------------------------------------------------
 # COALESCE keeps the existing value if the new one is NULL —
 # this prevents accidentally overwriting good data with missing data
 def upsert_commit(
@@ -216,9 +212,9 @@ def upsert_commit(
     )
 
 
-# --------------------------------------------------------------------------------
+
 # Function: insert or update a CVE <-> commit link
-# --------------------------------------------------------------------------------
+
 # Stores the relationship between a CVE and a fix commit, plus how the link was discovered
 # (method) and how confident we are in it (confidence)
 def link_cve_commit(
@@ -245,9 +241,8 @@ def link_cve_commit(
     )
 
 
-# -----------------------------------------------------
+
 # Function: insert or update a patch row
-# -----------------------------------------------------
 # Conflict is detected on the unique index (repo_url, commit_sha, file_path) —
 # this means re-running the pipeline on the same commit updates the row instead of duplicating it
 def insert_patch(
@@ -302,9 +297,9 @@ def insert_patch(
     )
 
 
-# ---------------------------------------------
+
 # Function: insert a function row into the DB
-# ---------------------------------------------
+
 # Note the `*` in the signature — every argument after it must be passed as a keyword.
 # This prevents subtle bugs from passing many similar string args in the wrong order
 def insert_function(
@@ -350,9 +345,9 @@ def insert_function(
     return int(cur.lastrowid)
 
 
-# -----------------------------------------------------------------------
+
 # Function: get commits referenced in CVEs that haven't been enriched yet
-# -----------------------------------------------------------------------
+
 def get_unenriched_commits(
     conn: sqlite3.Connection,
     limit: int | None = None,
@@ -393,9 +388,9 @@ def get_unenriched_commits(
         for row in rows
     ]
 
-# -----------------------------------------------------------------------
+
 # Function: read the sync state for a given source
-# -----------------------------------------------------------------------
+
 def get_sync_state(conn: sqlite3.Connection, source_name: str) -> dict | None:
     # Used at startup to check if the latest CVE release has already been processed
     row = conn.execute(
@@ -418,9 +413,9 @@ def get_sync_state(conn: sqlite3.Connection, source_name: str) -> dict | None:
     }
 
 
-# -----------------------------------------------------------------------
+
 # Function: insert or update the sync state for a source
-# -----------------------------------------------------------------------
+
 def upsert_sync_state(
     conn: sqlite3.Connection,
     source_name: str,
