@@ -5,7 +5,7 @@ from src.patch.language_detection import detect_language_from_path
 from src.utils.file_filter import should_skip_file
 
 #-----------------------------------------------------------------
-# Funksjon for å bygge patch-data fra en liste med modified_files
+# Function for building patch data from a list of modified_files
 #-----------------------------------------------------------------
 def build_patch_data_from_modified_files(
     repo_url: str,
