@@ -7,6 +7,7 @@ import glob
 from pathlib import Path
 import typer
 
+# Import helpers that pull metadata fields out of a raw CVE record
 from src.cve import (
     load_cve_from_file,
     extract_cve_info,
@@ -106,6 +107,7 @@ def ingest():
                 typer.echo(f"    Skipper: {commit['error']}")
                 continue
 
+         Updated upstream
             sha = commit["commit_hash"]
             msg = commit.get("commit_message", "")
             author = commit.get("author", "")
@@ -123,7 +125,6 @@ def ingest():
                 repo_url=commit.get('repo_url')
             )
 
-<<<<<<< Updated upstream
             # Lagre kobling CVE ↔ commit
             link_cve_commit(
                 conn,
@@ -133,10 +134,8 @@ def ingest():
                 method="message_regex",
                 confidence=1.0 if commit.get("mentions_target_cve") else 0.5,
             )
-=======
-        try:
-            combined_functions = commit.get("functions", [])
             for fn in combined_functions:
+                # We need both the before and after version to be useful as ML training data
                 if fn.get("vuln_function") is None or fn.get("patch_function") is None:
                     continue
                 insert_function(
@@ -235,4 +234,5 @@ def show(cve_id: str):
 
 
 if __name__ == "__main__":
+    # Run the Typer app as a CLI when this file is executed directly
     app()

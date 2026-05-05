@@ -1,0 +1,207 @@
+from pathlib import Path
+import re
+
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, classification_report
+from sklearn.model_selection import train_test_split
+
+
+# ---- Feature extractors ----
+# Each function takes a code string and returns 0 or 1, indicating whether
+# a specific pattern is present. These are the "signals" the ML model learns from.
+# All functions guard against non-string input (NaN, None) by returning 0
+
+
+def has_null_check(code: str) -> int:
+    # Detects null/None comparisons across multiple languages (Java, JS, Python)
+    if not isinstance(code, str):
+        return 0
+    patterns = [
+        r"\bnull\b",
+        r"\bNone\b",
+        r"==\s*null",
+        r"!=\s*null",
+        r"is\s+None",
+        r"is\s+not\s+None",
+    ]
+    # Returns 1 if ANY pattern matches, otherwise 0
+    return int(any(re.search(pattern, code) for pattern in patterns))
+
+
+def has_if_statement(code: str) -> int:
+    # \b ensures we match the keyword "if", not substrings like "diff" or "gift"
+    if not isinstance(code, str):
+        return 0
+    return int(bool(re.search(r"\bif\b", code)))
+
+
+def has_try_catch(code: str) -> int:
+    # Covers Java/JS (try/catch) and Python (try/except)
+    if not isinstance(code, str):
+        return 0
+    return int(bool(re.search(r"\btry\b|\bcatch\b|\bexcept\b", code)))
+
+
+def has_throw_or_raise(code: str) -> int:
+    # Java/JS use "throw", Python uses "raise"
+    if not isinstance(code, str):
+        return 0
+    return int(bool(re.search(r"\bthrow\b|\braise\b", code)))
+
+
+def has_return(code: str) -> int:
+    if not isinstance(code, str):
+        return 0
+    return int(bool(re.search(r"\breturn\b", code)))
+
+
+def has_length_check(code: str) -> int:
+    # Length/bounds checks are often added in patches to prevent buffer overflows
+    if not isinstance(code, str):
+        return 0
+    patterns = [
+        r"\.length",        # JS / Java
+        r"\blen\s*\(",      # Python
+        r"\bsize\b",        # C++ / Java collections
+        r"\bbyteLength\b",  # JS typed arrays
+    ]
+    return int(any(re.search(pattern, code) for pattern in patterns))
+
+
+def has_regex(code: str) -> int:
+    # Regex usage can indicate input validation — relevant for injection vulnerabilities
+    if not isinstance(code, str):
+        return 0
+    patterns = [
+        r"RegExp",
+        r"\.exec\s*\(",
+        r"\.match\s*\(",
+        r"/.+/",            # Inline regex literal /.../ in JS
+    ]
+    return int(any(re.search(pattern, code) for pattern in patterns))
+
+
+def line_count(code: str) -> int:
+    # Numeric feature — function size in lines
+    if not isinstance(code, str) or not code.strip():
+        return 0
+    return len(code.splitlines())
+
+
+def char_count(code: str) -> int:
+    # Numeric feature — function size in characters
+    if not isinstance(code, str):
+        return 0
+    return len(code)
+
+
+def build_features(df: pd.DataFrame) -> pd.DataFrame:
+    # Apply every feature extractor to the "code" column.
+    # .copy() prevents modifying the caller's DataFrame
+    df = df.copy()
+
+    df["has_null_check"] = df["code"].apply(has_null_check)
+    df["has_if_statement"] = df["code"].apply(has_if_statement)
+    df["has_try_catch"] = df["code"].apply(has_try_catch)
+    df["has_throw_or_raise"] = df["code"].apply(has_throw_or_raise)
+    df["has_return"] = df["code"].apply(has_return)
+    df["has_length_check"] = df["code"].apply(has_length_check)
+    df["has_regex"] = df["code"].apply(has_regex)
+    df["line_count"] = df["code"].apply(line_count)
+    df["char_count"] = df["code"].apply(char_count)
+
+    return df
+
+
+def main() -> None:
+    # Path to the dataset exported earlier from the SQLite database
+    file_path = Path("data/machine_learning/function_dataset.xlsx")
+
+    # Spreadsheet has no headers, so name the two columns manually
+    pairs_df = pd.read_excel(file_path, header=None)
+    pairs_df.columns = ["vuln_function", "patch_function"]
+
+    # Remove completely empty rows
+    pairs_df = pairs_df.dropna(how="all")
+
+    # Build training rows:
+    # vulnerable code = 1
+    # patched code    = 0
+    # Each pair becomes two training rows — one labeled vulnerable, one patched
+    vuln_rows = pd.DataFrame({
+        "code": pairs_df["vuln_function"],
+        "label": 1,
+    })
+
+    patch_rows = pd.DataFrame({
+        "code": pairs_df["patch_function"],
+        "label": 0,
+    })
+
+    # Combine into a single dataset
+    dataset = pd.concat([vuln_rows, patch_rows], ignore_index=True)
+
+    # Remove empty code rows
+    # First drop NaN, then drop rows that are only whitespace
+    dataset = dataset.dropna(subset=["code"])
+    dataset = dataset[dataset["code"].astype(str).str.strip() != ""]
+
+    # Build boolean / simple numeric features
+    dataset = build_features(dataset)
+
+    # The full list of features the model will train on
+    feature_columns = [
+        "has_null_check",
+        "has_if_statement",
+        "has_try_catch",
+        "has_throw_or_raise",
+        "has_return",
+        "has_length_check",
+        "has_regex",
+        "line_count",
+        "char_count",
+    ]
+
+    # X = inputs (features), y = target (vulnerable or not)
+    X = dataset[feature_columns]
+    y = dataset["label"]
+
+    # Split into 80% train / 20% test.
+    # random_state=42 makes the split reproducible across runs.
+    # stratify=y keeps the same vuln/patched ratio in both train and test sets
+    X_train, X_test, y_train, y_test = train_test_split(
+        X,
+        y,
+        test_size=0.2,
+        random_state=42,
+        stratify=y,
+    )
+
+    # Random Forest = ensemble of decision trees, robust default choice for tabular data
+    model = RandomForestClassifier(random_state=42)
+    model.fit(X_train, y_train)
+
+    # Predict labels on the held-out test set to measure real generalization
+    y_pred = model.predict(X_test)
+
+    # Print evaluation results
+    print("Rows in dataset:", len(dataset))
+    print("Feature columns:", feature_columns)
+    print("Accuracy:", accuracy_score(y_test, y_pred))
+    # classification_report shows precision, recall and F1 per class
+    print(classification_report(y_test, y_pred))
+
+    # Optional: see which features mattered most
+    # Feature importance shows which patterns the model relied on most for its decisions
+    importance_df = pd.DataFrame({
+        "feature": feature_columns,
+        "importance": model.feature_importances_,
+    }).sort_values("importance", ascending=False)
+
+    print("\nFeature importance:")
+    print(importance_df.to_string(index=False))
+
+
+if __name__ == "__main__":
+    main()

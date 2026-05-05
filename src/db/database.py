@@ -8,6 +8,7 @@ from typing import Optional  # Brukes for å markere at parametere kan være Non
 SCHEMA_SQL = """
 PRAGMA foreign_keys = ON;  -- Sørger for at SQLite håndhever foreign key-regler
 
+-- Master table for CVE records
 CREATE TABLE IF NOT EXISTS cve (
   cve_id      TEXT PRIMARY KEY,  -- Unik identifikator for sårbarheten
   description TEXT,              -- Beskrivelse av sårbarheten
@@ -19,6 +20,8 @@ CREATE TABLE IF NOT EXISTS cve (
   state       TEXT               -- Status for CVE (f.eks. PUBLISHED)
 );
 
+-- Commit metadata. (repo_url, sha) is composite PK because the same SHA
+-- can theoretically exist in different repos
 CREATE TABLE IF NOT EXISTS commits (
   repo_url      TEXT NOT NULL,   -- Hvilket repository commiten tilhører
   sha           TEXT NOT NULL,   -- Commit-hash
@@ -30,6 +33,8 @@ CREATE TABLE IF NOT EXISTS commits (
   PRIMARY KEY (repo_url, sha)    -- Sikrer unikhet per repo
 );
 
+-- One row per modified file in a commit.
+-- AUTOINCREMENT id makes inserts simple
 CREATE TABLE IF NOT EXISTS patch (
   patch_id      INTEGER PRIMARY KEY AUTOINCREMENT,
   repo_url      TEXT NOT NULL,
@@ -44,6 +49,8 @@ CREATE TABLE IF NOT EXISTS patch (
     ON DELETE CASCADE  -- Hvis commit slettes, slettes tilhørende patcher
 );
 
+-- One row per changed function (vulnerable + patched pair).
+-- This is the main table the ML training data is built from
 CREATE TABLE IF NOT EXISTS functions (
   function_id     INTEGER PRIMARY KEY AUTOINCREMENT,  -- Unik ID for function-raden
   repo_url        TEXT NOT NULL,                      -- Hvilket repository funksjonen tilhører

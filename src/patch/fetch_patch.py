@@ -21,6 +21,7 @@ def fetch_patch_data(repo_url: str, commit_sha: str) -> list[dict]:
     patch_data: list[dict] = []
 
     for file in modified_files:
+        # The file path tells us which file was changed in this commit
         file_path = file.get("file_path", "")
         patch_text = file.get("patch_text")
 
@@ -29,6 +30,9 @@ def fetch_patch_data(repo_url: str, commit_sha: str) -> list[dict]:
         before_code = file.get("before_code") or parsed.get("before_code", "")
         after_code = file.get("after_code") or parsed.get("after_code", "")
 
+        # Assemble the final row.
+        # .get(..., default) is used everywhere so a missing field never crashes the pipeline —
+        # we just fall back to a sensible default (0 for counts, "" for text)
         patch_data.append(
             {
                 # Metadata
