@@ -1,18 +1,21 @@
-# --------------------------------------------------------------
-# IMPORTS: impoterer biblitekene som trengs for DB-hånteringen
-# ---------------------------------------------------------------
+
+# IMPORTS: libraries needed for the DB layer
+
 from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
 
 
-# -----------------
+
 # Database schema
-# -----------------
+
+# All tables and indexes defined as a single SQL script.
+# IF NOT EXISTS makes the script safe to re-run on an existing database
 SCHEMA_SQL = """
 PRAGMA foreign_keys = ON;
 
+-- Master table for CVE records
 CREATE TABLE IF NOT EXISTS cve (
     cve_id TEXT PRIMARY KEY,
     title TEXT,
@@ -23,6 +26,8 @@ CREATE TABLE IF NOT EXISTS cve (
     state TEXT
 );
 
+-- Many-to-many link between CVEs and commits.
+-- Composite PK prevents duplicate links for the same CVE+commit pair
 CREATE TABLE IF NOT EXISTS cve_commit (
     cve_id TEXT NOT NULL,
     repo_url TEXT NOT NULL,
@@ -36,6 +41,8 @@ CREATE TABLE IF NOT EXISTS cve_commit (
         ON UPDATE CASCADE
 );
 
+-- Commit metadata. (repo_url, sha) is composite PK because the same SHA
+-- can theoretically exist in different repos
 CREATE TABLE IF NOT EXISTS commits (
     repo_url TEXT NOT NULL,
     sha TEXT NOT NULL,
@@ -46,6 +53,8 @@ CREATE TABLE IF NOT EXISTS commits (
     PRIMARY KEY (repo_url, sha)
 );
 
+-- One row per modified file in a commit.
+-- AUTOINCREMENT id makes inserts simple
 CREATE TABLE IF NOT EXISTS patch (
     patch_id INTEGER PRIMARY KEY AUTOINCREMENT,
     repo_url TEXT NOT NULL,
@@ -63,6 +72,8 @@ CREATE TABLE IF NOT EXISTS patch (
         ON UPDATE CASCADE
 );
 
+-- One row per changed function (vulnerable + patched pair).
+-- This is the main table the ML training data is built from
 CREATE TABLE IF NOT EXISTS functions (
   function_id     INTEGER PRIMARY KEY AUTOINCREMENT,
   repo_url        TEXT NOT NULL,
@@ -80,15 +91,19 @@ CREATE TABLE IF NOT EXISTS functions (
     ON DELETE CASCADE
 );
 
+-- Tracks which release of the CVE list we have already synced,
+-- so the pipeline can skip re-processing the same release
 CREATE TABLE IF NOT EXISTS sync_state (
     source_name TEXT PRIMARY KEY,
     release_tag TEXT,
     synced_at TEXT
 );
 
+-- Prevents duplicate patch rows for the same commit + file
 CREATE UNIQUE INDEX IF NOT EXISTS uq_patch_commit_file
 ON patch(repo_url, commit_sha, file_path);
 
+-- Indexes to speed up the most common lookups in the pipeline and reports
 CREATE INDEX IF NOT EXISTS idx_cve_published
 ON cve(published);
 
@@ -112,32 +127,34 @@ ON functions(repo_url, commit_sha);
 """
 
 
-# -----------------------------------
-# Funksjon for å koble til database
-# -----------------------------------
+
+# Function: connect to the database
 def connect(db_path: str | Path) -> sqlite3.Connection:
+    # Ensure the parent folder exists so SQLite can create the file
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
     conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA foreign_keys = ON;")
-    conn.execute("PRAGMA journal_mode = WAL;")
-    conn.execute("PRAGMA synchronous = NORMAL;")
-    conn.execute("PRAGMA temp_store = MEMORY;")
+    # PRAGMAs tune SQLite for our workload:
+    conn.execute("PRAGMA foreign_keys = ON;")     # Enforce FK constraints (off by default in SQLite)
+    conn.execute("PRAGMA journal_mode = WAL;")    # WAL allows concurrent reads while writing
+    conn.execute("PRAGMA synchronous = NORMAL;")  # Faster writes, still crash-safe
+    conn.execute("PRAGMA temp_store = MEMORY;")   # Keep temp data in RAM, not on disk
     return conn
 
 
-# -------------------------------------------------
-# Funksjon for å initialisere database med schema
-# -------------------------------------------------
+
+# Function: initialize the database with the schema
 def init_db(conn: sqlite3.Connection) -> None:
+    # executescript runs multiple SQL statements at once
     conn.executescript(SCHEMA_SQL)
     conn.commit()
 
 
-# ---------------------------------------------------
-# Funksjon for å oppdatere eller sette inn CVE-data
-# ---------------------------------------------------
+
+# Function: insert or update a CVE row
+# "Upsert" pattern: insert if new, update if it already exists.
+# ON CONFLICT(cve_id) means the conflict is detected on the primary key
 def upsert_cve(
     conn: sqlite3.Connection,
     cve_id: str,
@@ -166,9 +183,10 @@ def upsert_cve(
     )
 
 
-# ------------------------------------------------------
-# Funksjon for å oppdatere eller sette inn commit data
-# ------------------------------------------------------
+
+# Function: insert or update a commit row
+# COALESCE keeps the existing value if the new one is NULL —
+# this prevents accidentally overwriting good data with missing data
 def upsert_commit(
     conn: sqlite3.Connection,
     repo_url: str,
@@ -194,9 +212,11 @@ def upsert_commit(
     )
 
 
-# --------------------------------------------------------------------------------
-# Funksjon for å oppdatere eller sette inn kobling mellom CVE-records til commits
-# --------------------------------------------------------------------------------
+
+# Function: insert or update a CVE <-> commit link
+
+# Stores the relationship between a CVE and a fix commit, plus how the link was discovered
+# (method) and how confident we are in it (confidence)
 def link_cve_commit(
     conn: sqlite3.Connection,
     cve_id: str,
@@ -221,9 +241,10 @@ def link_cve_commit(
     )
 
 
-# -----------------------------------------------------
-# Funksjon for å oppdatere eller sette inn patch-data
-# -----------------------------------------------------
+
+# Function: insert or update a patch row
+# Conflict is detected on the unique index (repo_url, commit_sha, file_path) —
+# this means re-running the pipeline on the same commit updates the row instead of duplicating it
 def insert_patch(
     conn: sqlite3.Connection,
     repo_url: str,
@@ -276,9 +297,11 @@ def insert_patch(
     )
 
 
-# ---------------------------------------------
-# Funksjon: Legger inn en funksjonsrad i DB
-# ---------------------------------------------
+
+# Function: insert a function row into the DB
+
+# Note the `*` in the signature — every argument after it must be passed as a keyword.
+# This prevents subtle bugs from passing many similar string args in the wrong order
 def insert_function(
     conn: sqlite3.Connection,
     *,
@@ -293,6 +316,7 @@ def insert_function(
     vuln_function: str | None = None,
     patch_function: str | None = None,
 ) -> int:
+    # repo_url is required because it's part of the FK to commits
     if not repo_url:
         raise ValueError("repo_url must be provided for function rows (FK to commits).")
 
@@ -317,19 +341,22 @@ def insert_function(
             patch_function,
         ),
     )
+    # Return the auto-generated function_id so the caller can reference the new row
     return int(cur.lastrowid)
 
 
-# -----------------------------------------------------------------------
-#
-# -----------------------------------------------------------------------
+
+# Function: get commits referenced in CVEs that haven't been enriched yet
+
 def get_unenriched_commits(
     conn: sqlite3.Connection,
     limit: int | None = None,
 ) -> list[dict]:
     """
-    Henter unike commits som finnes i cve_commit, men ikke i commits.
+    Get unique commits that exist in cve_commit but not in commits.
     """
+    # LEFT JOIN + WHERE c.sha IS NULL is the standard SQL pattern for "find rows in A
+    # that have no match in B" — here, commit references that haven't been enriched yet
     sql = """
         SELECT DISTINCT
             cc.repo_url,
@@ -343,6 +370,7 @@ def get_unenriched_commits(
         ORDER BY cc.repo_url, cc.commit_sha
     """
 
+    # Optional LIMIT for testing or partial runs
     params: tuple = ()
     if limit is not None:
         sql += " LIMIT ?"
@@ -350,6 +378,7 @@ def get_unenriched_commits(
 
     rows = conn.execute(sql, params).fetchall()
 
+    # Convert tuples to dicts so callers can use clear keys instead of positional indexes
     return [
         {
             "repo_url": row[0],
@@ -359,11 +388,11 @@ def get_unenriched_commits(
         for row in rows
     ]
 
-# -----------------------------------------------------------------------
-#
-# -----------------------------------------------------------------------
-def get_sync_state(conn: sqlite3.Connection, source_name: str) -> dict | None:
 
+# Function: read the sync state for a given source
+
+def get_sync_state(conn: sqlite3.Connection, source_name: str) -> dict | None:
+    # Used at startup to check if the latest CVE release has already been processed
     row = conn.execute(
         """
         SELECT source_name, release_tag, synced_at
@@ -373,6 +402,7 @@ def get_sync_state(conn: sqlite3.Connection, source_name: str) -> dict | None:
         (source_name,),
     ).fetchone()
 
+    # No row means this source has never been synced before
     if not row:
         return None
 
@@ -383,16 +413,16 @@ def get_sync_state(conn: sqlite3.Connection, source_name: str) -> dict | None:
     }
 
 
-# -----------------------------------------------------------------------
-#
-# -----------------------------------------------------------------------
+
+# Function: insert or update the sync state for a source
+
 def upsert_sync_state(
     conn: sqlite3.Connection,
     source_name: str,
     release_tag: str,
     synced_at: str,
 ) -> None:
-
+    # Called at the end of a successful run so the next run knows what was already done
     conn.execute(
         """
         INSERT INTO sync_state (source_name, release_tag, synced_at)
