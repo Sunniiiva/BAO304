@@ -4,9 +4,9 @@ from src.patch.parse_patch import parse_patch
 from src.patch.language_detection import detect_language_from_path
 from src.utils.file_filter import should_skip_file
 
-#-----------------------------------------------------------------
-# Funksjon for å bygge patch-data fra en liste med modified_files
-#-----------------------------------------------------------------
+
+# Function for building patch data from a list of modified_files
+
 def build_patch_data_from_modified_files(
     repo_url: str,
     commit_sha: str,
@@ -19,6 +19,7 @@ def build_patch_data_from_modified_files(
     patch_data: list[dict] = []
 
     for file in modified_files:
+        # The file path tells us which file was changed in this commit
         file_path = file.get("file_path", "")
         if should_skip_file(file_path):
             continue
@@ -26,6 +27,9 @@ def build_patch_data_from_modified_files(
         patch_text = file.get("patch_text", "")
         parsed = parse_patch(patch_text)
 
+        # Assemble the final row.
+        # .get(..., default) is used everywhere so a missing field never crashes the pipeline —
+        # we just fall back to a sensible default (0 for counts, "" for text)
         patch_data.append(
             {
                 "repo_url": repo_url,
