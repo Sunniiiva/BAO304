@@ -1,7 +1,7 @@
-# ---------------------------------------------------------------------
+
 # Method matching: validation, line-range overlap, and pairing of
 # before/after methods from PyDriller.
-# ---------------------------------------------------------------------
+
 
 from __future__ import annotations
 
@@ -54,9 +54,9 @@ def _extract_code_block(source: str | None, start: int | None, end: int | None) 
     return code if code.strip() else None
 
 
-# ---------------------------------------------------------------------
+
 # Cleanup and validation of extracted code blocks
-# ---------------------------------------------------------------------
+
 
 # Lines that are just leftovers from the previous function or from comment blocks —
 # not part of the function itself, but get included due to imprecise line boundaries.

@@ -8,16 +8,10 @@ from __future__ import annotations
 import os
 import sys
 
-# Gjør det mulig å kjøre filen direkte ved å legge prosjektrot på sys.path
-# Without this, Python would not find the `src` package when the file is run directly
-# instead of being imported as part of the package
+
 if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# The three functions under test:
-#   extract_repo_and_hash — parses a commit URL into (repo_url, commit_hash, platform)
-#   detect_platform       — figures out which Git host a URL belongs to
-#   _inject_token         — injects an auth token into a URL for private repo cloning
 from src.repo.utils import (
     extract_repo_and_hash,
     detect_platform,
@@ -25,15 +19,6 @@ from src.repo.utils import (
 )
 
 
-# Positive test cases: URLs that SHOULD parse successfully.
-# Format: (input_url, expected_repo_url, expected_commit_hash, expected_platform)
-# Each tuple covers a different real-world variation we need to handle:
-#   - GitHub with full and short SHA
-#   - URLs wrapped in markdown link syntax [text](url)
-#   - URLs with extra query parameters (?diff=split)
-#   - GitLab's two URL styles (with and without /-/)
-#   - Bitbucket's two URL styles (commits vs commit)
-#   - URLs ending in .git
 test_cases = [
     ("https://github.com/torvalds/linux/commit/abc123def4567890",
      "https://github.com/torvalds/linux", "abc123def4567890", "github"),
@@ -55,8 +40,6 @@ test_cases = [
      "https://github.com/owner/repo", "abc1234", "github"),
 ]
 
-# Negative test cases: input that should NOT parse (function must return None).
-# Covers unsupported hosts, repo URLs without a commit, empty string, and None
 negative_cases = [
     "https://example.com/owner/repo/commit/abc123",
     "https://github.com/owner/repo",

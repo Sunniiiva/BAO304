@@ -7,7 +7,6 @@ from sklearn.metrics import accuracy_score, classification_report
 from sklearn.model_selection import train_test_split
 
 
-# ---- Feature extractors ----
 # Each function takes a code string and returns 0 or 1, indicating whether
 # a specific pattern is present. These are the "signals" the ML model learns from.
 # All functions guard against non-string input (NaN, None) by returning 0
@@ -70,7 +69,7 @@ def has_length_check(code: str) -> int:
 
 
 def has_regex(code: str) -> int:
-    # Regex usage can indicate input validation — relevant for injection vulnerabilities
+    # Regex usage can indicate input validation relevant for injection vulnerabilities
     if not isinstance(code, str):
         return 0
     patterns = [
@@ -83,7 +82,7 @@ def has_regex(code: str) -> int:
 
 
 def line_count(code: str) -> int:
-    # Numeric feature — function size in lines
+    # Numeric feature function size in lines
     if not isinstance(code, str) or not code.strip():
         return 0
     return len(code.splitlines())
