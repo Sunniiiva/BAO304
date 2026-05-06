@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import requests
+
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -47,7 +50,9 @@ from src.utils.git_access import cleanup_all_temp_repos, enable_git_longpaths
 # Clones and parses one commit using PyDriller
 from src.commit.load_commit import load_single_commit
 
-# Typer app powers the CLI
+from dotenv import load_dotenv
+load_dotenv()  # Laster .env automatisk uansett miljø
+
 app = typer.Typer(help="CVE -> commit -> patch pipeline")
 
 # Default SQLite path
@@ -59,6 +64,18 @@ def _startup() -> None:
     """Runs before any command."""
     # Required on Windows for some repos with deep paths
     enable_git_longpaths()
+    
+    # GitHub token-sjekk
+    token = os.getenv("GITHUB_TOKEN")
+    if not token:
+        typer.echo("⚠️  Ingen GITHUB_TOKEN funnet – kjører med 60 requests/time")
+    else:
+        response = requests.get(
+            "https://api.github.com/rate_limit",
+            headers={"Authorization": f"token {token}"}
+        )
+        data = response.json()["rate"]
+        typer.echo(f"GitHub token er aktiv – {data['remaining']}/{data['limit']} requests gjenstår")
 
 
 
