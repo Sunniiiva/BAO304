@@ -12,10 +12,9 @@ from .database import (
     insert_patch,
     insert_function,
     link_cve_commit,
-    get_commits_for_cve,
-    get_patches_for_commit,
-    get_functions_for_commit,
-    get_function_overview,
+    get_sync_state,
+    upsert_sync_state,
+    get_unenriched_commits,
 )
 
 # offentlig API for db-pakken
@@ -27,8 +26,7 @@ __all__ = [
     "insert_patch",
     "insert_function",
     "link_cve_commit",
-    "get_commits_for_cve",
-    "get_patches_for_commit",
-    "get_functions_for_commit",
-    "get_function_overview",
+    "get_sync_state",
+    "upsert_sync_state",
+    "get_unenriched_commits",
 ]
