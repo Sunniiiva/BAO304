@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 import sys
 
-# Gjør det mulig å kjøre filen direkte ved å legge prosjektrot på sys.path
+
 if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -50,13 +50,16 @@ negative_cases = [
 
 
 def main() -> int:
+    # Counts how many tests failed across all sections — returned as exit code at the end
     fails = 0
 
+    # ---- Section 1: positive cases ----
     print("=" * 70)
     print("Positive tester (URL-er som SKAL parses):")
     print("=" * 70)
     for url, expected_repo, expected_hash, expected_platform in test_cases:
         result = extract_repo_and_hash(url)
+        # All three fields must match for the test to pass
         ok = (result is not None
               and result["repo_url"] == expected_repo
               and result["commit_hash"] == expected_hash
@@ -65,25 +68,31 @@ def main() -> int:
         print(f"{status} {url}")
         if not ok:
             fails += 1
+            # Print expected vs actual to make debugging easier
             print(f"    Forventet: repo={expected_repo}, hash={expected_hash}, platform={expected_platform}")
             print(f"    Fikk:      {result}")
 
+    # ---- Section 2: negative cases ----
     print()
     print("=" * 70)
     print("Negative tester (URL-er som IKKE skal parses):")
     print("=" * 70)
     for url in negative_cases:
         result = extract_repo_and_hash(url)
+        # For a negative case, returning None means it correctly rejected the input
         ok = result is None
         status = "OK " if ok else "XX "
         print(f"{status} {url!r} -> {result}")
         if not ok:
             fails += 1
 
+    # ---- Section 3: platform detection on its own ----
     print()
     print("=" * 70)
     print("Plattform-deteksjon:")
     print("=" * 70)
+    # Tests detect_platform separately from URL parsing.
+    # SourceForge is not supported — should return None
     platform_tests = [
         ("https://github.com/a/b", "github"),
         ("https://gitlab.com/a/b", "gitlab"),
@@ -98,19 +107,27 @@ def main() -> int:
         if not ok:
             fails += 1
 
+    # ---- Section 4: token injection (mocked environment variables) ----
     print()
     print("=" * 70)
     print("Token-injeksjon (med mock env):")
     print("=" * 70)
+    # Save the user's real tokens (if any) so we can restore them afterward.
+    # This prevents the test from clobbering credentials in the developer's shell.
     old_env = {
         k: os.environ.get(k)
         for k in ("GITHUB_TOKEN", "GITLAB_TOKEN", "BITBUCKET_TOKEN")
     }
+    # Set fake tokens just for the duration of these tests
     os.environ["GITHUB_TOKEN"] = "ghp_test123"
     os.environ["GITLAB_TOKEN"] = "glpat_test456"
     os.environ["BITBUCKET_TOKEN"] = "bbt_test789"
 
     try:
+        # Each Git host expects the token in a different URL format:
+        #   GitHub:    https://TOKEN@host/...
+        #   GitLab:    https://oauth2:TOKEN@host/...
+        #   Bitbucket: https://x-token-auth:TOKEN@host/...
         token_tests = [
             ("https://github.com/a/b",    "https://ghp_test123@github.com/a/b"),
             ("https://gitlab.com/a/b",    "https://oauth2:glpat_test456@gitlab.com/a/b"),
@@ -126,12 +143,15 @@ def main() -> int:
                 fails += 1
                 print(f"   Forventet: {expected}")
     finally:
+        # Always restore the original environment, even if a test crashed.
+        # If the variable did not exist before, remove it instead of setting it to None.
         for k, v in old_env.items():
             if v is None:
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
 
+    # ---- Final summary ----
     print()
     print("=" * 70)
     if fails == 0:
@@ -139,8 +159,10 @@ def main() -> int:
     else:
         print(f"{fails} tester feilet")
     print("=" * 70)
+    # Return failure count so the caller (or CI) can detect failures via the exit code
     return fails
 
 
 if __name__ == "__main__":
+    # sys.exit with the failure count: 0 means success, anything else means failure
     sys.exit(main())
