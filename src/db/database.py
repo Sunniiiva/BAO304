@@ -340,7 +340,7 @@ def get_unenriched_commits(
             ON c.repo_url = cc.repo_url
            AND c.sha = cc.commit_sha
         WHERE c.sha IS NULL
-        ORDER BY cc.repo_url, cc.commit_sha
+        ORDER BY random()
     """
 
     params: tuple = ()

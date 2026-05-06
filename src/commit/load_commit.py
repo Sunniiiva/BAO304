@@ -276,13 +276,7 @@ def _load_single_commit(repo_url: str, commit_hash: str):
 
     try:
         with _non_interactive_git_env():
-            cloned = _shallow_clone(repo_url, commit_hash, repo_dir)
-
-            if not cloned:
-                # Shallow feilet – prøv full clone som fallback
-                _rmtree_with_retries(repo_dir)
-                repo_dir = _make_local_temp_dir()
-                cloned = _full_clone(repo_url, repo_dir)
+            cloned = _full_clone(repo_url, repo_dir)
 
             if not cloned:
                 return {"error": f"Kloning feilet for {repo_url}", "skip_reason": "commit_fetch_failed"}
@@ -295,34 +289,18 @@ def _load_single_commit(repo_url: str, commit_hash: str):
                     break
 
     except Exception as e:
-        # Shallow krasjet under PyDriller-kjøring – prøv full clone
-        typer.echo(f"  [{commit_hash[:8]}] Shallow krasjet ({e}), prøver full clone...")
-        try:
-            _rmtree_with_retries(repo_dir)
-            repo_dir = _make_local_temp_dir()
-
-            if _full_clone(repo_url, repo_dir):
-                repo = Repository(str(repo_dir), single=commit_hash)
-                for commit in repo.traverse_commits():
-                    if commit.hash == commit_hash:
-                        result = _extract_commit_data(commit, repo_url)
-                        break
-            else:
-                result = {"error": f"Full clone feilet også for {repo_url}", "skip_reason": "commit_fetch_failed"}
-        except Exception as e2:
-            msg = str(e2).lower()
-            if any(x in msg for x in ["could not read username", "authentication failed",
-                                       "repository not found", "terminal prompts disabled"]):
-                result = {"error": f"Privat/utilgjengelig repo: {e2}", "skip_reason": "repo_inaccessible"}
-            else:
-                result = {"error": f"Feil ved henting av {repo_url}@{commit_hash}: {e2}", "skip_reason": "commit_fetch_failed"}
+        msg = str(e).lower()
+        if any(x in msg for x in ["could not read username", "authentication failed",
+                                   "repository not found", "terminal prompts disabled"]):
+            result = {"error": f"Privat/utilgjengelig repo: {e}", "skip_reason": "repo_inaccessible"}
+        else:
+            result = {"error": f"Feil ved henting av {repo_url}@{commit_hash}: {e}", "skip_reason": "commit_fetch_failed"}
 
     finally:
         gc.collect()
         _rmtree_with_retries(repo_dir)
 
     return result
-
 
 def load_single_commit(repo_url: str, commit_hash: str):
     """
