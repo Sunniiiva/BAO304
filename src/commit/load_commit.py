@@ -276,7 +276,7 @@ def _load_single_commit(repo_url: str, commit_hash: str):
 
     try:
         with _non_interactive_git_env():
-            cloned = _full_clone(repo_url, repo_dir)
+            cloned = _shallow_clone(repo_url, commit_hash, repo_dir)
 
             if not cloned:
                 return {"error": f"Kloning feilet for {repo_url}", "skip_reason": "commit_fetch_failed"}
