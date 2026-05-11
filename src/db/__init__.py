@@ -1,6 +1,6 @@
-# Collects the functions used to handle the SQLite database in the project
+# Contains the functions used to manage the SQLite database in the project
 
-# import av DB-funksjoner, så de brukes direkte fra db-pakken
+# Imports database functions so they can be used directly from the db package
 from .database import (
     connect,
     init_db,
@@ -14,7 +14,7 @@ from .database import (
     get_unenriched_commits,
 )
 
-# offentlig API for db-pakken
+# Public API for the db package
 __all__ = [
     "connect",
     "init_db",
