@@ -1,12 +1,12 @@
 """
-Testfil for BAO304 - CVE og patch-analyse pipeline
-Tester parse_cve, parse_patch og file_filter modulene
+Test file for BAO304 - CVE and patch analysis pipeline.
+Tests the parse_cve, parse_patch, and file_filter modules.
 """
 
 import sys
 import os
 
-# Legg til src i path slik at imports fungerer
+# Add src to the path so imports work
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 import pytest
 
@@ -24,9 +24,8 @@ from patch.parse_patch import parse_patch
 from patch.file_filter import should_skip_file
 
 
-# ============================================================
-# Hjelpefunksjon: lager et minimalt gyldig CVE-dataobjekt
-# ============================================================
+
+# Helper function: creates a minimal valid CVE data object
 
 def make_cve(
     cve_id="CVE-2023-12345",
@@ -40,8 +39,8 @@ def make_cve(
     cvss_severity="HIGH",
     references=None,
 ):
-    """Lager et minimalt, gyldig CVE-dataobjekt for testing."""
-    affected = [{"product": p} for p in (products or ["TestProduct"])]
+"""Creates a minimal, valid CVE data object for testing."""
+affected = [{"product": p} for p in (products or ["TestProduct"])]
     desc_list = descriptions or [{"lang": "en", "value": "En test-beskrivelse."}]
     problem_types = []
     if cwe_ids:
@@ -80,9 +79,7 @@ def make_cve(
     }
 
 
-# ============================================================
-# Tester for extract_cve_info
-# ============================================================
+# Tests for extract_cve_info
 
 class TestExtractCveInfo:
 
@@ -111,9 +108,8 @@ class TestExtractCveInfo:
         assert cve_id == "UNKNOWN"
 
 
-# ============================================================
-# Tester for extract_state
-# ============================================================
+
+# Tests for extract_state
 
 class TestExtractState:
 
@@ -127,10 +123,7 @@ class TestExtractState:
         assert extract_state({}) == "UNKNOWN"
 
 
-# ============================================================
-# Tester for extract_products
-# ============================================================
-
+# Tests for extract_products
 class TestExtractProducts:
 
     def test_ett_produkt(self):
@@ -146,10 +139,7 @@ class TestExtractProducts:
         assert extract_products(data) == []
 
 
-# ============================================================
-# Tester for extract_description
-# ============================================================
-
+# Tests for extract_description
 class TestExtractDescription:
 
     def test_engelsk_beskrivelse(self):
@@ -167,9 +157,7 @@ class TestExtractDescription:
         assert extract_description(data) == "Description not collected"
 
 
-# ============================================================
-# Tester for extract_cwe_ids
-# ============================================================
+# Tests for extract_cwe_ids
 
 class TestExtractCweIds:
 
@@ -187,9 +175,7 @@ class TestExtractCweIds:
         assert extract_cwe_ids(data) == []
 
 
-# ============================================================
-# Tester for extract_cvss_score
-# ============================================================
+# Tests for extract_cvss_score
 
 class TestExtractCvssScore:
 
@@ -217,9 +203,7 @@ class TestExtractCvssScore:
         assert result["score"] == 9.8
 
 
-# ============================================================
-# Tester for extract_grouped_references
-# ============================================================
+# Tests for extract_grouped_references
 
 class TestExtractGroupedReferences:
 
@@ -248,9 +232,7 @@ class TestExtractGroupedReferences:
         assert result == {"commit": [], "pull": [], "security-advisories": [], "other": []}
 
 
-# ============================================================
-# Tester for validate_cve_data
-# ============================================================
+# Tests for validate_cve_data
 
 class TestValidateCveData:
 
@@ -283,10 +265,7 @@ class TestValidateCveData:
         assert valid is False
 
 
-# ============================================================
-# Tester for parse_patch
-# ============================================================
-
+# Tests for parse_patch
 class TestParsePatch:
 
     def test_enkel_patch(self):
@@ -336,10 +315,7 @@ class TestParsePatch:
         assert result["changed_lines"] == result["added_lines"] + result["removed_lines"]
 
 
-# ============================================================
-# Tester for should_skip_file (file_filter)
-# ============================================================
-
+# Tests for should_skip_file (file_filter)
 class TestShouldSkipFile:
 
     # Filer som SKAL hoppes over
