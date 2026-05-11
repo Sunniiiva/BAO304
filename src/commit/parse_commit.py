@@ -4,7 +4,7 @@ from src.utils.parse_url import extract_repo_and_hash
 from src.cve.parse_cve import extract_grouped_references
 
 
-# Funksjon for å trekke ut commit-referanser fra CVE-data
+# Function for extracting commit references from CVE data
 
 def extract_commit_references(cve_data: dict) -> list[dict]:
     """
