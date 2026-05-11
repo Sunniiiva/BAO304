@@ -1,7 +1,4 @@
-# -------------------------------------------------------------------------
-# DB-pakke fo rdatabasehpntering
-# Samler funksjonene som brukes til å håntere SQLite.databasen i prosjektet
-#---------------------------------------------------------------------------
+# Collects the functions used to handle the SQLite database in the project
 
 # import av DB-funksjoner, så de brukes direkte fra db-pakken
 from .database import (
