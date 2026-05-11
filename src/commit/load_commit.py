@@ -1,7 +1,6 @@
-# ---------------------------------------------------------------------
 # Commit loading: clones the repo, extracts commit data with PyDriller,
 # and returns a structured dict.
-# ---------------------------------------------------------------------
+
 
 from __future__ import annotations
 
