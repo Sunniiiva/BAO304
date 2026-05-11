@@ -1,6 +1,6 @@
 """
-Test for multi-plattform URL-parsing i src/repo/utils.py.
-Kjør fra prosjektrot (BAO304/):
+Test for multi-platform URL parsing in src/repo/utils.py.
+Run from the project root (BAO304/):
     python src/test_multi_platform.py
 """
 from __future__ import annotations
@@ -53,7 +53,7 @@ def main() -> int:
     # Counts how many tests failed across all sections — returned as exit code at the end
     fails = 0
 
-    # ---- Section 1: positive cases ----
+    # Section 1: positive cases
     print("=" * 70)
     print("Positive tester (URL-er som SKAL parses):")
     print("=" * 70)
@@ -72,7 +72,7 @@ def main() -> int:
             print(f"    Forventet: repo={expected_repo}, hash={expected_hash}, platform={expected_platform}")
             print(f"    Fikk:      {result}")
 
-    # ---- Section 2: negative cases ----
+    # Section 2: negative cases 
     print()
     print("=" * 70)
     print("Negative tester (URL-er som IKKE skal parses):")
@@ -86,7 +86,7 @@ def main() -> int:
         if not ok:
             fails += 1
 
-    # ---- Section 3: platform detection on its own ----
+    # Section 3: platform detection on its own 
     print()
     print("=" * 70)
     print("Plattform-deteksjon:")
@@ -107,7 +107,7 @@ def main() -> int:
         if not ok:
             fails += 1
 
-    # ---- Section 4: token injection (mocked environment variables) ----
+    # Section 4: token injection (mocked environment variables) 
     print()
     print("=" * 70)
     print("Token-injeksjon (med mock env):")
@@ -151,7 +151,7 @@ def main() -> int:
             else:
                 os.environ[k] = v
 
-    # ---- Final summary ----
+    # Final summary 
     print()
     print("=" * 70)
     if fails == 0:
