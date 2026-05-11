@@ -18,8 +18,7 @@ _DIFF_META_PREFIXES = (
 
 #Src -> extract cve, file level, patch level, function level 
 
-# Funksjon for å parse patch-tekst og trekke ut relevant info
-
+# Function for parsing patch text and extracting relevant information
 def parse_patch(patch_text: str | None) -> dict[str, Any]:
     patch_text = patch_text or ""
 
