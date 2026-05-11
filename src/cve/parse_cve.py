@@ -1,9 +1,9 @@
 import re
 from urllib.parse import urlparse
 
-# ----------------------------------
-# Funksjon for CVE informasjon
-# ----------------------------------
+
+# Function for CVE information
+
 def extract_cve_info(cve_data):
 
     cve_id = cve_data.get("cveMetadata", {}).get("cveId", "UNKNOWN")
@@ -22,16 +22,15 @@ def extract_cve_info(cve_data):
     return cve_id, title
 
 
-#--------------------------------------------
-# Funkjon som viser STATE data til cve filen
-#---------------------------------------------
+
+# Function that shows the STATE data from the CVE file
+
 def extract_state(cve_data):
     return cve_data.get("cveMetadata", {}).get("state", "UNKNOWN")
                                                
                                                
-# ----------------------------------
-# Funksjon for Products
-# ----------------------------------
+# Function for products
+
 def extract_products(cve_data):
 
     affected = (
@@ -47,10 +46,9 @@ def extract_products(cve_data):
         if entry.get("product")
     ]
 
-# ------------------------------------------
-# Funksjon for Description: henter ut navnene 
-# på produktene som er berørt av sårbarheten
-# -------------------------------------------
+# Function for Description: extracts the names
+# of the products affected by the vulnerability
+
 def extract_description(cve_data, lang="en"):
 
     descriptions = (
@@ -67,10 +65,8 @@ def extract_description(cve_data, lang="en"):
     return "Description not collected"
 
 
-# ---------------------------------------------------------------------
-# Funksjon for CWE ID: Henter ut alle CWE-IDer som er knyttet til CVEen
-# ----------------------------------------------------------------------
-def extract_cwe_ids(cve_data):
+# Function for CWE ID: extracts all CWE IDs linked to the CVE
+    def extract_cwe_ids(cve_data):
 
     cwe_ids = set()
 
@@ -90,11 +86,10 @@ def extract_cwe_ids(cve_data):
     return list(cwe_ids)
 
 
-# --------------------------------------------
-# Funksjon for CVSS score og severity:        
-# Henter CVSS-score og serverity fra en CVE,  
-# og velder den høyeste versjonen automatisk  
-# ---------------------------------------------
+# Function for CVSS score and severity:
+# Extracts the CVSS score and severity from a CVE,
+# and automatically selects the highest available version 
+
 def extract_cvss_score(cve_data):
 
     metrics_list = (
@@ -132,11 +127,10 @@ def extract_cvss_score(cve_data):
 
     return best_cvss
 
-# ------------------------------------------------------------
-# Funksjon for å grupere referanser
-# Grupperer CVE-referanser etter type
-# Brukes for å identifisere commits til videre patch-analye
-# -------------------------------------------------------------
+# Function for grouping references
+# Groups CVE references by type
+# Used to identify commits for further patch analysis
+
 def extract_grouped_references(cve_data):
     refs = (
         cve_data
@@ -176,9 +170,7 @@ def extract_grouped_references(cve_data):
     return grouped
 
 
-# ----------------------------------
-# Enkel validering av CVE-data
-# ----------------------------------
+# Simple validation of CVE data
 
 def validate_cve_data(cve_data):
 
