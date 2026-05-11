@@ -1,6 +1,4 @@
-#-----------------------------------------------------------------------
-# Funksjoner for å hente CVE-data fra offisiell kilde (cvelistV5 på GitHub).
-#-----------------------------------------------------------------------
+# Functions for fetching CVE data from the official source (cvelistV5 on GitHub).
 
 #imports
 from __future__ import annotations
@@ -17,9 +15,8 @@ import requests
 #filsti til latest release zip på GitHub
 GITHUB_RELEASES_LATEST_API = "https://api.github.com/repos/CVEProject/cvelistV5/releases/latest"
 
-#-----------------------------------------------------------------------
-# Funksjon for å hente metadata om nyeste release 
-#-----------------------------------------------------------------------
+# Function for fetching metadata about the latest release
+
 def get_latest_release_info() -> dict:
     """
     Henter metadata om nyeste offisielle release fra cvelistV5.
@@ -28,9 +25,8 @@ def get_latest_release_info() -> dict:
     response.raise_for_status()
     return response.json()
 
-#-----------------------------------------------------------------------
-# Funksjon for å finne zip-asset i nyeste release
-#-----------------------------------------------------------------------
+
+# Function for finding the ZIP asset in the latest release
 def find_release_zip_asset(release_data: dict) -> tuple[str, str]:
     """
     Finner zip-asset i GitHub-release.
@@ -45,9 +41,8 @@ def find_release_zip_asset(release_data: dict) -> tuple[str, str]:
 
     raise RuntimeError("Fant ingen zip-asset i latest cvelistV5 release.")
 
-#-----------------------------------------------------------------------
-# Funksjon for å laste ned release-zip til en midlertidig fil
-#-----------------------------------------------------------------------
+# Function for downloading the release ZIP to a temporary file
+
 def download_release_zip(download_url: str) -> Path:
     """
     Laster ned release-zip til en midlertidig fil og returnerer path.
@@ -64,9 +59,8 @@ def download_release_zip(download_url: str) -> Path:
     tmp.close()
     return tmp_path
 
-#-----------------------------------------------------------------------
-# Funksjon for å iterere gjennom CVE-records fra en zip-fil
-#-----------------------------------------------------------------------
+# Function for iterating through CVE records from a ZIP file
+
 def iter_cve_records_from_zip(zip_path: str | Path):
     zip_path = Path(zip_path)
 
@@ -143,9 +137,8 @@ def iter_cve_records_from_zip(zip_path: str | Path):
                     continue
 
 
-#-----------------------------------------------------------------------
-# Funksjon for å iterere gjennom CVE-records fra den offisielle kilden
-#-----------------------------------------------------------------------
+# Function for iterating through CVE records from the official source
+
 def iter_cve_records_from_official_source() -> Generator[dict, None, None]:
     """
     Full pipeline:
