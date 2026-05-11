@@ -30,7 +30,7 @@ from src.commit.method_matching import (
     _valid_line_range,
 )
 
-# Prosjektlokal temp-mappe 
+# Project-local temporary folder
 _TEMP_ROOT = Path("temp_repos")
 
 
@@ -111,8 +111,8 @@ def _shallow_clone(repo_url: str, commit_hash: str, target_dir: Path) -> bool:
 
 def _full_clone(repo_url: str, target_dir: Path) -> bool:
     """
-    Full clone uten depth-begrensning. Brukes som fallback når shallow feiler.
-    """
+Full clone without depth limitation. Used as a fallback when shallow clone fails.
+"""
     env = os.environ.copy()
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["GCM_INTERACTIVE"] = "Never"
@@ -180,7 +180,7 @@ def _extract_commit_data(commit, repo_url: str) -> dict:
                 "error": str(e),
             })
 
-        # --- function data ---
+        # function data
         # Need both before/after source AND a list of changed methods to pair them up
         if not mf.source_code_before or not mf.source_code or not mf.changed_methods:
             continue
@@ -254,7 +254,7 @@ def _extract_commit_data(commit, repo_url: str) -> dict:
                 "patch_function": patch_code,
             })
 
-    # ── Postprosessering: fjern bulk-refaktorering ──
+# Post-processing: remove bulk refactoring
     _BULK_THRESHOLD = 10
     same_len = [
         fn for fn in functions_data
